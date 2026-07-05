@@ -1,0 +1,13 @@
+{
+  "name": "Golf Analytics",
+  "short_name": "Golf Analytics",
+  "description": "Analítica de tiros de golf desde tu monitor de lanzamiento",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1512",
+  "theme_color": "#0e1512",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

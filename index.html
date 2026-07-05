@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Golf Analytics">
+  <meta name="theme-color" content="#0e1512">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <title>Golf Analytics</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <span class="logo">⛳</span>
+  <h1>Golf Analytics</h1>
+  <button class="ghost-btn upload-trigger">＋ Cargar CSV</button>
+</header>
+
+<!-- Toolbar (filtro por fecha + unidades) -->
+<div id="toolbar" style="display:none">
+  <select id="range-preset" aria-label="Rango de fechas">
+    <option value="all">Todas las fechas</option>
+    <option value="last">Última sesión</option>
+    <option value="7d">Últimos 7 días</option>
+    <option value="30d">Últimos 30 días</option>
+    <option value="90d">Últimos 90 días</option>
+    <option value="ytd">Este año</option>
+    <option value="custom">Rango personalizado…</option>
+  </select>
+  <input type="date" id="range-from" class="range-date" aria-label="Desde" style="display:none">
+  <input type="date" id="range-to" class="range-date" aria-label="Hasta" style="display:none">
+  <span id="range-count" class="muted" style="font-size:12px"></span>
+  <div class="seg" role="group" aria-label="Unidades" style="margin-left:auto">
+    <button data-unit="imperial">yd / mph</button>
+    <button data-unit="metric">m / km/h</button>
+  </div>
+</div>
+
+<!-- Estado vacío -->
+<div id="empty-state">
+  <div class="big-icon">⛳</div>
+  <h2>Carga tus tiros</h2>
+  <p>Sube los archivos <b>.csv</b> que exporta tu monitor de lanzamiento (Rapsodo MLM). Puedes cargar varias sesiones para ver tu evolución. Arrastra los archivos aquí o usa el botón.</p>
+  <div class="empty-actions">
+    <button class="btn-primary upload-trigger">Seleccionar archivos CSV</button>
+    <button class="ghost-btn" id="load-demo">Ver con datos de ejemplo</button>
+  </div>
+  <p class="help-note">Tus datos se guardan solo en este dispositivo (en el navegador). Nada se sube a internet.</p>
+</div>
+
+<!-- App -->
+<main id="app-main" style="display:none">
+
+  <!-- RESUMEN -->
+  <section class="tab-panel active" id="tab-overview">
+    <h2 class="section">Resumen</h2>
+    <div class="stat-grid">
+      <div class="stat"><div class="v" id="ov-shots">0</div><div class="l">Tiros</div></div>
+      <div class="stat"><div class="v" id="ov-clubs">0</div><div class="l">Palos</div></div>
+      <div class="stat"><div class="v" id="ov-sessions">0</div><div class="l">Sesiones</div></div>
+      <div class="stat"><div class="v" id="ov-range" style="font-size:14px">–</div><div class="l">Periodo</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Distancia de carry por palo</h3>
+      <div class="chart-wrap"><canvas id="chart-gapping"></canvas></div>
+      <div id="gapping-analysis"></div>
+      <p class="help-note">«Solape» = dos palos vuelan casi igual (uno sobra o al largo le falta impacto). «Hueco» = zona de distancias sin palo que la cubra.</p>
+    </div>
+
+    <div class="card">
+      <h3>🏅 Récords personales <span class="muted" style="font-weight:400">· en el rango elegido</span></h3>
+      <div class="stat-grid" id="records-grid" style="margin-bottom:0"></div>
+    </div>
+
+    <div class="card">
+      <h3>Tu bolsa <span class="muted" style="font-weight:400">· vs <span id="bag-bench-label"></span> · calle <span id="bag-fairway-label"></span></span></h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Palo</th><th>N</th><th class="num">Carry</th><th class="num">±</th>
+            <th class="num">P25–P75</th>
+            <th class="num">Ball</th><th class="num">Smash</th><th class="num">Disp.</th>
+            <th>Calle</th><th>Consist.</th><th class="num">vs Ref</th>
+          </tr></thead>
+          <tbody id="bag-table-body"></tbody>
+        </table>
+      </div>
+      <p class="help-note">«Calle» = % de bolas que caen dentro del fairway apuntando al centro (ancho configurable en Datos → Ajustes).</p>
+    </div>
+  </section>
+
+  <!-- POR PALO -->
+  <section class="tab-panel" id="tab-club">
+    <h2 class="section">Análisis por palo</h2>
+    <div class="card">
+      <select id="club-select" style="width:100%;margin-bottom:14px"></select>
+      <div class="metric-grid" id="club-metrics"></div>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <h3>Dispersión (vista desde atrás)</h3>
+        <div class="chart-wrap"><canvas id="chart-dispersion"></canvas></div>
+        <p class="help-note">Elipses doradas: zonas donde cae ≈68% y ≈95% de tus tiros. ✕ gris = tiro atípico excluido de las estadísticas (se puede cambiar en Datos → Ajustes).</p>
+      </div>
+      <div class="card" id="club-bench"></div>
+    </div>
+    <div class="card">
+      <h3>Forma de tiro (salida × curva)</h3>
+      <p class="muted" id="shape-caption" style="font-size:12px;margin:0 0 10px"></p>
+      <div class="shape-grid" id="shape-grid"></div>
+    </div>
+  </section>
+
+  <!-- EVOLUCIÓN -->
+  <section class="tab-panel" id="tab-evolution">
+    <h2 class="section">Evolución</h2>
+    <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+        <select id="evo-club" style="flex:1;min-width:140px"></select>
+        <select id="evo-metric" style="flex:1;min-width:140px">
+          <option value="carry">Carry</option>
+          <option value="ball">Ball speed</option>
+          <option value="smash">Smash factor</option>
+          <option value="side">Dispersión lateral</option>
+          <option value="la">Launch angle</option>
+          <option value="ld">Dirección de salida</option>
+          <option value="roll">Roll (total − carry)</option>
+        </select>
+      </div>
+      <p class="muted" id="evo-note" style="font-size:13px"></p>
+      <div class="chart-wrap tall"><canvas id="chart-evolution"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Dentro de la sesión (calentamiento / fatiga)</h3>
+      <p class="muted" id="warmup-note" style="font-size:13px"></p>
+      <div class="chart-wrap"><canvas id="chart-warmup"></canvas></div>
+      <p class="help-note">Cada sesión se divide en tres tercios según el orden de tus tiros (respeta el palo elegido arriba). El carry se muestra relativo al promedio del palo en esa sesión, para poder mezclar palos y sesiones.</p>
+    </div>
+  </section>
+
+  <!-- PATRONES -->
+  <section class="tab-panel" id="tab-patterns">
+    <h2 class="section">Patrones e insights <span class="muted" style="font-size:14px">(<span id="ins-count">0</span>)</span></h2>
+    <div class="card ins-col">
+      <h3>✅ Fortalezas / mejoras reales</h3>
+      <div id="ins-strength"></div>
+    </div>
+    <div class="card ins-col">
+      <h3>⚠️ A mejorar</h3>
+      <div id="ins-improve"></div>
+    </div>
+    <div class="card ins-col">
+      <h3>🎯 Patrones de lanzamiento</h3>
+      <div id="ins-pattern"></div>
+    </div>
+  </section>
+
+  <!-- METAS -->
+  <section class="tab-panel" id="tab-goals">
+    <h2 class="section">Metas</h2>
+    <div class="card">
+      <h3>🚩 Nueva meta</h3>
+      <div class="goal-form">
+        <label>Palo
+          <select id="goal-club"></select>
+        </label>
+        <label>Criterio de éxito
+          <select id="goal-type">
+            <option value="fairway">% de bolas en calle</option>
+            <option value="side">% con desviación lateral ≤ X</option>
+          </select>
+        </label>
+        <label id="goal-side-wrap" style="display:none"><span>Desviación lateral máx (<span class="goal-unit">yd</span>)</span>
+          <input id="goal-side" type="number" value="20" min="1" step="1">
+        </label>
+        <label>Meta (%)
+          <input id="goal-target" type="number" value="50" min="1" max="100" step="1">
+        </label>
+        <label>Ventana (últimos N días)
+          <input id="goal-window" type="number" value="30" min="1" max="365" step="1">
+        </label>
+        <label><span>Carry mínimo (<span class="goal-unit">yd</span>)</span>
+          <input id="goal-mincarry" type="number" value="0" min="0" step="1">
+        </label>
+        <label>Inicio de la meta
+          <input id="goal-start" type="date">
+        </label>
+      </div>
+      <button class="btn-primary" id="goal-add" style="margin-top:12px">Crear meta</button>
+      <p class="help-note">Ejemplos: «3 Madera: 50% en calle en los últimos 30 días, contando solo tiros con carry &gt; 140 yd» o «Hierro 7: 60% con desviación lateral ≤ 15 yd en los últimos 45 días, con carry &gt; 100 yd». El % en calle usa el ancho de fairway definido en Datos → Ajustes. El carry mínimo evita que tops y golpes de práctica cuenten en la meta. El <b>inicio</b> puede ser una fecha pasada: así ves de dónde vienes (línea verde desde esa fecha) y defines metas realistas.</p>
+    </div>
+    <div id="goals-list"></div>
+  </section>
+
+  <!-- BENCHMARK -->
+  <section class="tab-panel" id="tab-benchmark">
+    <h2 class="section">Benchmark</h2>
+    <div class="card">
+      <select id="benchmark-select" style="width:100%;margin-bottom:6px">
+        <option value="amateur">Aficionado (hombre)</option>
+        <option value="pro_senior">Profesional Senior</option>
+      </select>
+      <h3 id="bench-title" style="margin-top:10px"></h3>
+      <p class="muted" id="bench-desc" style="font-size:13px;margin:0 0 12px"></p>
+      <select id="bench-radar-club" style="width:100%;margin-bottom:6px" aria-label="Palo del radar"></select>
+      <p class="muted" id="bench-radar-caption" style="font-size:12px;margin:0 0 8px"></p>
+      <div class="chart-wrap"><canvas id="chart-radar"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Palo</th><th class="num">Tu carry</th><th class="num">Ref</th><th class="num">Δ</th>
+            <th class="num">Tu ball</th><th class="num">Ref</th><th class="num">Smash</th><th class="num">Δ</th>
+          </tr></thead>
+          <tbody id="bench-table-body"></tbody>
+        </table>
+      </div>
+      <p class="help-note">Valores de referencia aproximados (TrackMan/Rapsodo públicos). Úsalos como guía de tendencia.</p>
+    </div>
+  </section>
+
+  <!-- DATOS / AJUSTES -->
+  <section class="tab-panel" id="tab-data">
+    <h2 class="section">Datos y ajustes</h2>
+
+    <div class="card">
+      <h3>Sesiones</h3>
+      <div id="sessions-list"></div>
+      <button class="btn-primary upload-trigger" style="margin-top:14px">＋ Cargar más CSV</button>
+    </div>
+
+    <div class="card">
+      <h3>Ajustes</h3>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <div class="metric-label" style="margin-bottom:6px">Mano dominante (para detectar slice/hook)</div>
+          <div class="seg">
+            <button data-hand="right">Diestro</button>
+            <button data-hand="left">Zurdo</button>
+          </div>
+        </div>
+        <div>
+          <div class="metric-label" style="margin-bottom:6px">Unidades</div>
+          <div class="seg">
+            <button data-unit="imperial">yd / mph</button>
+            <button data-unit="metric">m / km/h</button>
+          </div>
+        </div>
+        <div>
+          <div class="metric-label" style="margin-bottom:6px">Ancho de fairway (para % en calle)</div>
+          <div class="seg">
+            <button data-fairway="28">Estrecho 28</button>
+            <button data-fairway="36">Estándar 36</button>
+            <button data-fairway="44">Ancho 44</button>
+          </div>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <span class="metric-label">Personalizado:</span>
+            <input id="fairway-input" type="number" min="10" max="80" step="1" style="width:90px"> <span class="muted">yd</span>
+          </div>
+          <p class="help-note">Apuntando al centro, una bola está fuera si su desviación lateral supera la mitad del ancho. Referencia: cursos normales 36–44 yd, nivel tour 28–32, majors ~24.</p>
+        </div>
+        <div>
+          <div class="metric-label" style="margin-bottom:6px">Tiros atípicos (tops, duffs o lecturas erróneas del monitor)</div>
+          <div class="seg">
+            <button data-outliers="on">Excluir</button>
+            <button data-outliers="off">Incluir</button>
+          </div>
+          <p class="help-note">Al excluirlos, un tiro con carry muy alejado del resto del palo (regla 1.5×IQR) no cuenta para promedios, consistencia ni insights. Se marcan con ✕ gris en el gráfico de dispersión.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Respaldo</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="ghost-btn" id="export-data">⬇ Exportar respaldo</button>
+        <label class="ghost-btn" style="cursor:pointer">⬆ Importar respaldo
+          <input type="file" id="import-input" accept="application/json" hidden>
+        </label>
+      </div>
+      <p class="help-note">Útil para mover tus datos entre iPhone y iPad (exporta en uno e importa en el otro).</p>
+    </div>
+
+    <div class="card">
+      <h3 style="color:var(--red)">Zona de peligro</h3>
+      <button class="btn-del" id="clear-all">Borrar todos los datos</button>
+    </div>
+  </section>
+
+</main>
+
+<!-- Tab bar -->
+<nav class="tabbar">
+  <button class="tab-btn active" data-tab="overview"><span class="ic">📊</span>Resumen</button>
+  <button class="tab-btn" data-tab="club"><span class="ic">🏌️</span>Palo</button>
+  <button class="tab-btn" data-tab="evolution"><span class="ic">📈</span>Evolución</button>
+  <button class="tab-btn" data-tab="patterns"><span class="ic">🎯</span>Patrones</button>
+  <button class="tab-btn" data-tab="goals"><span class="ic">🚩</span>Metas</button>
+  <button class="tab-btn" data-tab="benchmark"><span class="ic">🏆</span>Benchmark</button>
+  <button class="tab-btn" data-tab="data"><span class="ic">⚙️</span>Datos</button>
+</nav>
+
+<input type="file" id="file-input" accept=".csv,text/csv" multiple hidden>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="benchmarks.js"></script>
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
