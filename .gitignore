@@ -1,3 +1,5 @@
 data/
 .DS_Store
 .claude/
+tools/.venv/
+garmin_export/
