@@ -12,6 +12,7 @@ instalar como app desde Safari).
 - **Evolución**: cómo cambian tus métricas sesión a sesión, y análisis **dentro de la sesión** (calentamiento / fatiga por tercios).
 - **Patrones e insights**: detección automática de fortalezas y áreas a mejorar — separa **dirección de salida** (cara/alineación) de **curva en vuelo** (cara vs trayectoria), forma de tiro dominante, costo del impacto descentrado con tu propia data, solapes/huecos de gapping, fatiga, y tendencias reales entre sesiones (regresión).
 - **Filtro de tiros atípicos**: los tops/lecturas erróneas del monitor se excluyen de las estadísticas (configurable en Datos → Ajustes).
+- **Cancha**: importa tus rondas reales desde Garmin Golf (script `tools/garmin_golf_export.py`): score vs par, putts, fairways y GIR por ronda, detalle hoyo a hoyo, evolución, y comparación cancha vs rango (¿fallas al mismo lado?).
 - **Metas**: define metas por palo (ej. «3 Madera: 50% en calle en los últimos 30 días, solo tiros con carry > 140 yd» o «Hierro 7: 60% con lateral ≤ 15 yd») y sigue tu % de cumplimiento sesión a sesión desde el día en que definiste la meta, contra la línea objetivo.
 - **Benchmark**: comparación contra **Aficionado (hombre)** y **Profesional Senior**.
 - **Datos**: gestionar sesiones, fechas, unidades (yd/mph ↔ m/km·h), mano dominante, y respaldo (exportar/importar).

@@ -197,6 +197,36 @@
     <div id="goals-list"></div>
   </section>
 
+  <!-- CANCHA -->
+  <section class="tab-panel" id="tab-course">
+    <h2 class="section">Cancha</h2>
+    <div class="card">
+      <h3>⛳ Rondas de Garmin Golf</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Importa los JSON que descarga <code>tools/garmin_golf_export.py</code> (sirven tanto los <code>round_*.json</code> individuales como el combinado <code>garmin_golf_all.json</code>).</p>
+      <label class="btn-primary" style="display:inline-block;cursor:pointer">＋ Importar rondas (.json)
+        <input type="file" id="garmin-input" accept="application/json,.json" multiple hidden>
+      </label>
+    </div>
+    <p class="muted" id="course-empty" style="padding:0 4px">Sin rondas cargadas aún.</p>
+    <div id="course-content" style="display:none">
+      <div class="stat-grid" id="course-stats"></div>
+      <div class="card">
+        <h3>Evolución de tus rondas</h3>
+        <div class="chart-wrap"><canvas id="chart-course"></canvas></div>
+        <p class="help-note">Score sobre par de los hoyos jugados (barras) y putts por hoyo (línea). Las rondas de 9 hoyos se marcan (9).</p>
+      </div>
+      <div class="card" id="course-compare"></div>
+      <div class="card">
+        <h3>Rondas</h3>
+        <div id="rounds-list"></div>
+      </div>
+      <div class="card">
+        <h3 id="course-holes-title">Detalle por hoyo</h3>
+        <div class="table-scroll" id="course-holes"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- BENCHMARK -->
   <section class="tab-panel" id="tab-benchmark">
     <h2 class="section">Benchmark</h2>
@@ -302,6 +332,7 @@
   <button class="tab-btn" data-tab="evolution"><span class="ic">📈</span>Evolución</button>
   <button class="tab-btn" data-tab="patterns"><span class="ic">🎯</span>Patrones</button>
   <button class="tab-btn" data-tab="goals"><span class="ic">🚩</span>Metas</button>
+  <button class="tab-btn" data-tab="course"><span class="ic">⛳</span>Cancha</button>
   <button class="tab-btn" data-tab="benchmark"><span class="ic">🏆</span>Benchmark</button>
   <button class="tab-btn" data-tab="data"><span class="ic">⚙️</span>Datos</button>
 </nav>

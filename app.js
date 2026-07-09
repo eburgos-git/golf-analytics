@@ -6,11 +6,13 @@
 const STORE_KEY = "golf_sessions_v2";
 const PREF_KEY = "golf_prefs_v2";
 const GOALS_KEY = "golf_goals_v1";
+const ROUNDS_KEY = "golf_rounds_v1";
 
 /* ---------- Estado ---------- */
 let state = {
   sessions: [],          // [{id, date, name, fileName, shots:[...]}]
   goals: [],             // [{id, club, type:"fairway"|"side", sideMax, targetPct, windowDays, minCarry, createdAt}]
+  rounds: [],            // rondas de cancha importadas de Garmin Golf
   prefs: {
     unit: "imperial",    // imperial (yd/mph) | metric (m/kmh)
     hand: "right",       // right | left
@@ -194,6 +196,7 @@ function save() {
   localStorage.setItem(STORE_KEY, JSON.stringify(state.sessions));
   localStorage.setItem(PREF_KEY, JSON.stringify(state.prefs));
   localStorage.setItem(GOALS_KEY, JSON.stringify(state.goals));
+  localStorage.setItem(ROUNDS_KEY, JSON.stringify(state.rounds));
 }
 function load() {
   try {
@@ -203,6 +206,8 @@ function load() {
     if (p) state.prefs = { ...state.prefs, ...p };
     const g = JSON.parse(localStorage.getItem(GOALS_KEY));
     if (Array.isArray(g)) state.goals = g;
+    const r = JSON.parse(localStorage.getItem(ROUNDS_KEY));
+    if (Array.isArray(r)) state.rounds = r;
   } catch (e) { /* ignore */ }
 }
 
@@ -557,6 +562,25 @@ function generateInsights(shots) {
     }
   });
 
+  /* --- Cruce cancha ↔ rango (lado de fallo del tee) --- */
+  if (state.rounds.length) {
+    const agg = state.rounds.reduce((t, r) => ({
+      hit: t.hit + (r.stats.fwHit || 0), left: t.left + (r.stats.fwLeft || 0),
+      right: t.right + (r.stats.fwRight || 0), rec: t.rec + (r.stats.fwRec || 0)
+    }), { hit: 0, left: 0, right: 0, rec: 0 });
+    if (agg.rec >= 8) {
+      const range = rangeTeeFairway();
+      const courseSide = agg.right > agg.left ? "derecha" : agg.left > agg.right ? "izquierda" : null;
+      const rangeSide = range && (range.right > range.left ? "derecha" : range.left > range.right ? "izquierda" : null);
+      if (courseSide && rangeSide && courseSide === rangeSide) {
+        out.pattern.push({
+          title: `En cancha y rango fallas al mismo lado (${courseSide})`,
+          body: `De ${agg.rec} fairways registrados en tus rondas fallaste ${courseSide === "derecha" ? agg.right : agg.left} hacia la ${courseSide}, el mismo lado que tu patrón del rango. Corregir la salida del tee en la práctica debería subir tu % de fairways directamente.`
+        });
+      }
+    }
+  }
+
   /* --- Calentamiento / fatiga dentro de la sesión --- */
   const wb = warmupBuckets("__all");
   if (wb.sessions >= 3 && wb.rel[0] != null && wb.rel[2] != null) {
@@ -624,7 +648,7 @@ function gridOpts(extra = {}) {
    RENDER PRINCIPAL
    ============================================================ */
 function renderAll() {
-  const hasData = state.sessions.length > 0;
+  const hasData = state.sessions.length > 0 || state.rounds.length > 0;
   document.getElementById("empty-state").style.display = hasData ? "none" : "flex";
   document.getElementById("app-main").style.display = hasData ? "block" : "none";
   document.getElementById("toolbar").style.display = hasData ? "flex" : "none";
@@ -636,6 +660,7 @@ function renderAll() {
   renderEvolution();
   renderPatterns();
   renderGoals();
+  renderCourse();
   renderBenchmark();
   renderSessions();
   syncPrefControls();
@@ -1179,6 +1204,209 @@ function renderBenchmark() {
 }
 
 /* ============================================================
+   CANCHA — rondas importadas de Garmin Golf
+   Acepta round_*.json ({summary, detail, shots}) o el combinado
+   garmin_golf_all.json (array de esos objetos).
+   ============================================================ */
+function parseGarminRounds(data) {
+  const arr = Array.isArray(data) ? data : [data];
+  const out = [];
+  arr.forEach(item => {
+    if (!item || typeof item !== "object") return;
+    const s = item.summary || item;
+    const detWrap = item.detail || {};
+    const det = Array.isArray(detWrap.scorecardDetails) ? (detWrap.scorecardDetails[0] || {}) : detWrap;
+    const sc = det.scorecard || {};
+    const id = s.id || sc.id;
+    const start = s.startTime || sc.startTime || "";
+    if (!id || !start) return;
+    const pars = String(s.holePars || "").split("").map(n => +n || null);
+    const rawHoles = sc.holes || s.holes || [];
+    const holes = rawHoles.map(h => ({
+      n: h.number,
+      par: pars[h.number - 1] || null,
+      strokes: h.strokes != null ? h.strokes : null,
+      putts: h.putts != null ? h.putts : null,
+      fw: h.fairwayShotOutcome || null
+    })).sort((a, b) => a.n - b.n);
+    const rst = (det.scorecardStats && det.scorecardStats.round) || null;
+    const played = holes.filter(h => h.strokes != null);
+    const sum = (fn) => played.reduce((t, h) => t + (fn(h) || 0), 0);
+    const stats = {
+      fwHit: rst ? rst.fairwaysHit : holes.filter(h => h.fw === "HIT").length,
+      fwLeft: rst ? rst.fairwaysLeft : holes.filter(h => h.fw === "LEFT").length,
+      fwRight: rst ? rst.fairwaysRight : holes.filter(h => h.fw === "RIGHT").length,
+      fwRec: rst ? rst.fairwaysRecorded : holes.filter(h => h.fw).length,
+      gir: rst ? rst.greensInRegulation : null,
+      gRec: rst ? rst.greensRecorded : null,
+      putts: rst ? rst.putts : sum(h => h.putts),
+      meanPutts: rst && rst.meanPuttsPerHole != null ? rst.meanPuttsPerHole : null
+    };
+    out.push({
+      id: String(id),
+      date: start.slice(0, 10),
+      course: s.courseName || sc.courseName || "Campo",
+      holesCompleted: s.holesCompleted != null ? s.holesCompleted : played.length,
+      strokes: s.strokes != null ? s.strokes : sum(h => h.strokes),
+      parPlayed: sum(h => h.par),
+      holes,
+      stats
+    });
+  });
+  return out;
+}
+
+function roundVsPar(r) { return (r.strokes != null && r.parPlayed) ? r.strokes - r.parPlayed : null; }
+function signed(n) { return n > 0 ? `+${n}` : `${n}`; }
+
+/* % en calle del rango con palos de tee (maderas/híbridos/driver), para comparar con cancha */
+function rangeTeeFairway() {
+  const half = state.prefs.fairway / 2;
+  const sh = activeShots().filter(s => (s.club === "driver" || /^\d[wh]$/.test(s.club)) && s.side != null);
+  if (!sh.length) return null;
+  const inn = sh.filter(s => Math.abs(s.side) <= half).length;
+  const left = sh.filter(s => s.side < -half).length;
+  const right = sh.filter(s => s.side > half).length;
+  return { n: sh.length, inPct: Math.round(100 * inn / sh.length), left, right };
+}
+
+let selectedRound = null;
+
+function renderCourse() {
+  const emptyEl = document.getElementById("course-empty");
+  const contentEl = document.getElementById("course-content");
+  if (!emptyEl) return;
+  const rounds = [...state.rounds].sort((a, b) => a.date.localeCompare(b.date));
+  emptyEl.style.display = rounds.length ? "none" : "";
+  contentEl.style.display = rounds.length ? "" : "none";
+  if (!rounds.length) return;
+
+  /* --- Tarjetas de resumen --- */
+  const agg = rounds.reduce((t, r) => ({
+    fwHit: t.fwHit + (r.stats.fwHit || 0), fwLeft: t.fwLeft + (r.stats.fwLeft || 0),
+    fwRight: t.fwRight + (r.stats.fwRight || 0), fwRec: t.fwRec + (r.stats.fwRec || 0),
+    gir: t.gir + (r.stats.gir || 0), gRec: t.gRec + (r.stats.gRec || 0),
+    putts: t.putts + (r.stats.putts || 0),
+    holes: t.holes + (r.holesCompleted || 0)
+  }), { fwHit: 0, fwLeft: 0, fwRight: 0, fwRec: 0, gir: 0, gRec: 0, putts: 0, holes: 0 });
+  const best = rounds.reduce((b, r) => {
+    const v = roundVsPar(r);
+    if (v == null || !r.holesCompleted) return b;
+    const perHole = v / r.holesCompleted;
+    return (!b || perHole < b.perHole) ? { r, v, perHole } : b;
+  }, null);
+  const stat = (v, l, s) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
+  document.getElementById("course-stats").innerHTML =
+    stat(rounds.length, "Rondas", `${agg.holes} hoyos jugados`) +
+    (best ? stat(signed(best.v), "Mejor ronda (vs par)", `${best.r.date} · ${best.r.holesCompleted} hoyos`) : "") +
+    stat(agg.fwRec ? Math.round(100 * agg.fwHit / agg.fwRec) + "%" : "–", "Fairways", agg.fwRec ? `${agg.fwHit}/${agg.fwRec} · fallos: ${agg.fwLeft} izq, ${agg.fwRight} der` : "sin datos") +
+    stat(agg.holes && agg.putts ? (agg.putts / agg.holes).toFixed(2) : "–", "Putts por hoyo", agg.gRec ? `GIR ${agg.gir}/${agg.gRec}` : "");
+
+  /* --- Evolución de rondas --- */
+  makeChart("chart-course", {
+    type: "bar",
+    data: {
+      labels: rounds.map(r => `${r.date}${r.holesCompleted < 18 ? ` (${r.holesCompleted})` : ""}`),
+      datasets: [
+        { label: "Score vs par", data: rounds.map(roundVsPar), backgroundColor: "rgba(91,191,134,.5)", borderColor: COLORS.greenL, borderWidth: 1.5, yAxisID: "y" },
+        { label: "Putts por hoyo", type: "line", data: rounds.map(r => r.stats.meanPutts != null ? r.stats.meanPutts : (r.holesCompleted && r.stats.putts ? r.stats.putts / r.holesCompleted : null)), borderColor: COLORS.gold, backgroundColor: COLORS.gold, pointRadius: 4, tension: .3, yAxisID: "y1", spanGaps: true }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "top" } },
+      scales: {
+        x: gridOpts(),
+        y: gridOpts({ title: { display: true, text: "Golpes sobre par" }, beginAtZero: true }),
+        y1: { position: "right", grid: { drawOnChartArea: false }, ticks: { color: COLORS.gold }, title: { display: true, text: "Putts/hoyo", color: COLORS.gold }, suggestedMin: 1, suggestedMax: 3 }
+      }
+    }
+  });
+
+  /* --- Cancha vs rango --- */
+  const cmp = document.getElementById("course-compare");
+  const range = rangeTeeFairway();
+  let cmpHtml = `<h3>Cancha vs práctica (salidas del tee)</h3>`;
+  if (agg.fwRec) {
+    const missSide = agg.fwRight > agg.fwLeft ? "derecha" : agg.fwLeft > agg.fwRight ? "izquierda" : null;
+    cmpHtml += `<p style="font-size:14px;margin:6px 0"><b>Cancha:</b> ${Math.round(100 * agg.fwHit / agg.fwRec)}% de fairways (${agg.fwHit}/${agg.fwRec}) · fallos ${agg.fwLeft} izq / ${agg.fwRight} der</p>`;
+    if (range) {
+      cmpHtml += `<p style="font-size:14px;margin:6px 0"><b>Rango</b> (maderas/híbridos, calle de ${fmt(U.dist(state.prefs.fairway), 0)} ${U.distU()}): ${range.inPct}% en calle (${range.n} tiros) · fuera ${range.left} izq / ${range.right} der</p>`;
+      const rangeSide = range.right > range.left ? "derecha" : range.left > range.right ? "izquierda" : null;
+      if (missSide && rangeSide && missSide === rangeSide) {
+        cmpHtml += `<p class="muted" style="font-size:13px;margin:8px 0 0">⚠️ En cancha y en el rango fallas hacia el mismo lado (${missSide}): el patrón del rango se traslada al campo. Lo que corrijas practicando debería verse directo en tus fairways.</p>`;
+      } else if (missSide && rangeSide) {
+        cmpHtml += `<p class="muted" style="font-size:13px;margin:8px 0 0">En cancha fallas más a la ${missSide}, pero en el rango a la ${rangeSide}. Puede ser alineación distinta en el campo (apunta con referencia intermedia) o presión de juego.</p>`;
+      }
+    } else {
+      cmpHtml += `<p class="muted" style="font-size:13px">Carga sesiones de rango con maderas/híbridos para comparar.</p>`;
+    }
+  } else {
+    cmpHtml += `<p class="muted" style="font-size:13px">Tus rondas no tienen datos de fairway registrados (marca el resultado del drive en la app Garmin Golf al jugar).</p>`;
+  }
+  cmp.innerHTML = cmpHtml;
+
+  /* --- Lista de rondas --- */
+  if (!selectedRound || !rounds.some(r => r.id === selectedRound)) selectedRound = rounds[rounds.length - 1].id;
+  document.getElementById("rounds-list").innerHTML = [...rounds].reverse().map(r => {
+    const v = roundVsPar(r);
+    const fwPct = r.stats.fwRec ? Math.round(100 * r.stats.fwHit / r.stats.fwRec) : null;
+    return `<div class="round-row ${r.id === selectedRound ? "sel" : ""}" data-round="${r.id}">
+      <div class="round-info">
+        <div><b>${r.date}</b> · ${r.course}</div>
+        <div class="muted" style="font-size:12px">${r.holesCompleted} hoyos · ${r.strokes} golpes ${v != null ? `(<span class="${v > 0 ? "neg" : "pos"}">${signed(v)}</span>)` : ""} · putts ${r.stats.putts || "–"} · FW ${fwPct != null ? fwPct + "%" : "–"}</div>
+      </div>
+      <button class="btn-del" data-round-del="${r.id}">×</button>
+    </div>`;
+  }).join("");
+
+  /* --- Detalle por hoyo de la ronda seleccionada --- */
+  const sel = rounds.find(r => r.id === selectedRound);
+  document.getElementById("course-holes-title").textContent = `Detalle por hoyo — ${sel.date}`;
+  const fwIcon = { HIT: `<span class="badge good">✓</span>`, LEFT: `<span class="badge warn">← izq</span>`, RIGHT: `<span class="badge warn">der →</span>` };
+  document.getElementById("course-holes").innerHTML = `<table>
+    <thead><tr><th>Hoyo</th><th class="num">Par</th><th class="num">Golpes</th><th class="num">±</th><th class="num">Putts</th><th>Fairway</th></tr></thead>
+    <tbody>${sel.holes.filter(h => h.strokes != null).map(h => {
+      const d = (h.par != null) ? h.strokes - h.par : null;
+      const dTxt = d == null ? "–" : `<span class="${d <= 0 ? "pos" : d === 1 ? "" : "neg"}">${signed(d)}</span>`;
+      return `<tr>
+        <td class="club-cell">${h.n}</td>
+        <td class="num">${h.par ?? "–"}</td>
+        <td class="num">${h.strokes}</td>
+        <td class="num">${dTxt}</td>
+        <td class="num">${h.putts ?? "–"}</td>
+        <td>${h.fw ? (fwIcon[h.fw] || h.fw) : "–"}</td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>`;
+}
+
+function handleGarminFiles(fileList) {
+  const files = [...fileList].filter(f => /\.json$/i.test(f.name));
+  if (!files.length) { alert("Selecciona archivos .json exportados de Garmin."); return; }
+  let pending = files.length, added = 0, updated = 0, ignored = 0;
+  files.forEach(f => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const rounds = parseGarminRounds(JSON.parse(e.target.result));
+        if (!rounds.length) ignored++;
+        rounds.forEach(r => {
+          const i = state.rounds.findIndex(x => x.id === r.id);
+          if (i >= 0) { state.rounds[i] = r; updated++; }
+          else { state.rounds.push(r); added++; }
+        });
+      } catch { ignored++; }
+      if (--pending === 0) {
+        save(); renderCourse();
+        alert(`Rondas: ${added} nuevas, ${updated} actualizadas${ignored ? `, ${ignored} archivo(s) no reconocidos` : ""}.`);
+      }
+    };
+    reader.readAsText(f);
+  });
+}
+
+/* ============================================================
    METAS POR PALO
    Meta = % de tiros que cumplen un criterio (en calle, o
    |side| ≤ X) dentro de una ventana móvil de N días, contando
@@ -1455,6 +1683,23 @@ function init() {
     state.prefs.fairway = v; save(); renderAll();
   });
 
+  // Cancha (rondas Garmin)
+  document.getElementById("garmin-input").addEventListener("change", e => {
+    handleGarminFiles(e.target.files); e.target.value = "";
+  });
+  document.getElementById("rounds-list").addEventListener("click", e => {
+    const del = e.target.dataset.roundDel;
+    if (del) {
+      if (confirm("¿Eliminar esta ronda?")) {
+        state.rounds = state.rounds.filter(r => r.id !== del);
+        save(); renderCourse();
+      }
+      return;
+    }
+    const row = e.target.closest("[data-round]");
+    if (row) { selectedRound = row.dataset.round; renderCourse(); }
+  });
+
   // Metas
   document.getElementById("goal-type").addEventListener("change", e => {
     document.getElementById("goal-side-wrap").style.display = e.target.value === "side" ? "" : "none";
@@ -1507,7 +1752,7 @@ function init() {
 
   // Export / import JSON (respaldo)
   document.getElementById("export-data").addEventListener("click", () => {
-    const payload = { version: 2, sessions: state.sessions, goals: state.goals, prefs: state.prefs };
+    const payload = { version: 2, sessions: state.sessions, goals: state.goals, rounds: state.rounds, prefs: state.prefs };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1525,6 +1770,7 @@ function init() {
         } else if (data && Array.isArray(data.sessions)) {
           state.sessions = data.sessions;
           if (Array.isArray(data.goals)) state.goals = data.goals;
+          if (Array.isArray(data.rounds)) state.rounds = data.rounds;
           if (data.prefs) state.prefs = { ...state.prefs, ...data.prefs };
           save(); renderAll(); alert("Datos restaurados.");
         } else alert("Archivo de respaldo inválido.");
