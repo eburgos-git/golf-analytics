@@ -7,12 +7,14 @@ const STORE_KEY = "golf_sessions_v2";
 const PREF_KEY = "golf_prefs_v2";
 const GOALS_KEY = "golf_goals_v1";
 const ROUNDS_KEY = "golf_rounds_v1";
+const PRACTICE_KEY = "golf_practice_v1";
 
 /* ---------- Estado ---------- */
 let state = {
   sessions: [],          // [{id, date, name, fileName, shots:[...]}]
   goals: [],             // [{id, club, type:"fairway"|"side", sideMax, targetPct, windowDays, minCarry, createdAt}]
   rounds: [],            // rondas de cancha importadas de Garmin Golf
+  practice: [],          // juego corto: putting green y aproximaciones (ver sección JUEGO CORTO)
   prefs: {
     unit: "imperial",    // imperial (yd/mph) | metric (m/kmh)
     hand: "right",       // right | left
@@ -197,6 +199,7 @@ function save() {
   localStorage.setItem(PREF_KEY, JSON.stringify(state.prefs));
   localStorage.setItem(GOALS_KEY, JSON.stringify(state.goals));
   localStorage.setItem(ROUNDS_KEY, JSON.stringify(state.rounds));
+  localStorage.setItem(PRACTICE_KEY, JSON.stringify(state.practice));
 }
 function load() {
   try {
@@ -208,6 +211,8 @@ function load() {
     if (Array.isArray(g)) state.goals = g;
     const r = JSON.parse(localStorage.getItem(ROUNDS_KEY));
     if (Array.isArray(r)) state.rounds = r;
+    const pr = JSON.parse(localStorage.getItem(PRACTICE_KEY));
+    if (Array.isArray(pr)) state.practice = pr;
   } catch (e) { /* ignore */ }
 }
 
@@ -647,8 +652,11 @@ function gridOpts(extra = {}) {
 /* ============================================================
    RENDER PRINCIPAL
    ============================================================ */
+/* Permite abrir la app sin datos cargados (para registrar juego corto a mano) */
+let forceApp = false;
+
 function renderAll() {
-  const hasData = state.sessions.length > 0 || state.rounds.length > 0;
+  const hasData = forceApp || state.sessions.length > 0 || state.rounds.length > 0 || state.practice.length > 0;
   document.getElementById("empty-state").style.display = hasData ? "none" : "flex";
   document.getElementById("app-main").style.display = hasData ? "block" : "none";
   document.getElementById("toolbar").style.display = hasData ? "flex" : "none";
@@ -660,6 +668,7 @@ function renderAll() {
   renderEvolution();
   renderPatterns();
   renderGoals();
+  renderShort();
   renderCourse();
   renderBenchmark();
   renderSessions();
@@ -1407,6 +1416,429 @@ function handleGarminFiles(fileList) {
 }
 
 /* ============================================================
+   JUEGO CORTO — putting green y aproximaciones
+   Entrenamientos registrados a mano (no vienen del monitor):
+     · putt: {id, kind:"putt", date, place, score (vs par), holes?, note}
+       Par del putting green = 2 putts por hoyo, así que score < 0 es mejor.
+     · appr: {id, kind:"appr", date, dist (pasos), club, hits, total, note}
+   Independientes del filtro global de fechas (son series propias).
+   ============================================================ */
+const PUTT_PLACES = { valle1: "Valle 1", valle10: "Valle 10", driving: "Driving" };
+const PLACE_COLOR = { valle1: COLORS.greenL, valle10: COLORS.gold, driving: COLORS.blue };
+const APPR_DISTS = [10, 20];
+const DIST_COLOR = { 10: COLORS.greenL, 20: COLORS.gold };
+
+function placeLabel(k) { return PUTT_PLACES[k] || k; }
+function signedF(n, dec = 1) { return (n == null || isNaN(n)) ? "–" : (n > 0 ? "+" : "") + fmt(n, dec); }
+
+function practiceSorted() {
+  return [...state.practice].sort((a, b) => (a.date || "").localeCompare(b.date || "") || String(a.id).localeCompare(String(b.id)));
+}
+function puttEntries(place) {
+  return practiceSorted().filter(e => e.kind === "putt" && (!place || e.place === place));
+}
+function apprEntries(dist, club) {
+  return practiceSorted().filter(e => e.kind === "appr" && (!dist || e.dist === dist) && (!club || e.club === club));
+}
+/* Agrega tandas: total de bolas, aciertos y % global (no promedio de %) */
+function apprAgg(list) {
+  const t = list.reduce((s, e) => s + (e.total || 0), 0);
+  const h = list.reduce((s, e) => s + (e.hits || 0), 0);
+  return { n: list.length, t, h, pct: t ? 100 * h / t : null };
+}
+function apprPct(e) { return e.total ? 100 * e.hits / e.total : null; }
+/* Putts por hoyo de una vuelta al putting green (par = 2 por hoyo) */
+function puttPerHole(e) { return e.holes ? (2 * e.holes + e.score) / e.holes : null; }
+function apprBadge(pct, t) {
+  if (pct == null) return "–";
+  const cls = pct >= 70 ? "good" : pct >= 50 ? "ok" : pct >= 30 ? "warn" : "bad";
+  return `<span class="badge ${cls}">${fmt(pct, 0)}%</span>${t ? ` <span class="muted" style="font-size:11px">${t}</span>` : ""}`;
+}
+
+/* Tendencia de una serie cronológica (recta de regresión sobre todos los puntos).
+   eps = cambio total mínimo, en unidades de la serie, para no considerarla plana. */
+function trendOf(vals, higherBetter, eps) {
+  const v = vals.filter(x => x != null);
+  if (v.length < 3) return null;
+  const lr = linreg(v);
+  if (!lr) return null;
+  const total = lr.total;
+  if (Math.abs(total) < eps) return { total, dir: "flat" };
+  const better = higherBetter ? total > 0 : total < 0;
+  return { total, dir: better ? "up" : "down" };
+}
+function trendTxt(tr, unit) {
+  if (!tr) return `<span class="muted">pocos datos</span>`;
+  if (tr.dir === "flat") return `<span class="muted">→ estable</span>`;
+  const mag = `${fmt(Math.abs(tr.total), 1)}${unit}`;
+  return tr.dir === "up"
+    ? `<span class="pos">↗ mejora ${mag}</span>`
+    : `<span class="neg">↘ empeora ${mag}</span>`;
+}
+
+let prKind = "putt";          // putt | a10 | a20 (tipo del formulario)
+let practiceFilter = "all";   // all | putt | appr (filtro del historial)
+
+function renderShort() {
+  const emptyEl = document.getElementById("short-empty");
+  if (!emptyEl) return;
+  syncPracticeForm();
+  const has = state.practice.length > 0;
+  emptyEl.style.display = has ? "none" : "";
+  document.getElementById("short-content").style.display = has ? "" : "none";
+  if (!has) return;
+
+  renderShortStats();
+
+  // Cada bloque aparece solo cuando ese ejercicio tiene registros
+  const hasPutt = puttEntries().length > 0;
+  const hasAppr = apprEntries().length > 0;
+  document.getElementById("card-putt").style.display = hasPutt ? "" : "none";
+  document.getElementById("card-appr").style.display = hasAppr ? "" : "none";
+  document.getElementById("card-appr-club").style.display = hasAppr ? "" : "none";
+  if (hasPutt) { drawPuttChart(); renderPuttPlaces(); }
+  if (hasAppr) { drawApprChart(); drawApprClubChart(); renderApprClubTable(); }
+
+  renderShortInsights();
+  renderShortLog();
+}
+
+/* ---------- Tarjetas de resumen ---------- */
+function renderShortStats() {
+  const stat = (v, l, s) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
+  const putts = puttEntries();
+  let c1 = stat("–", "Vueltas de putting", "sin registros"), c2 = stat("–", "Putting · últimas 5", "");
+  if (putts.length) {
+    const scores = putts.map(e => e.score);
+    const best = Math.min(...scores);
+    const bestE = putts.filter(e => e.score === best).pop();
+    const last5 = scores.slice(-5);
+    c1 = stat(putts.length, "Vueltas de putting", `mejor ${signedF(best, 0)} · ${placeLabel(bestE.place)} · ${bestE.date}`);
+    c2 = stat(signedF(mean(last5), 1), `Putting · últimas ${last5.length}`, `histórico ${signedF(mean(scores), 1)} en ${putts.length} vueltas`);
+  }
+  const cards = APPR_DISTS.map(d => {
+    const a = apprAgg(apprEntries(d));
+    return a.n
+      ? stat(a.pct == null ? "–" : fmt(a.pct, 0) + "%", `Aprox. ${d} pasos`, `${a.h}/${a.t} bolas · ${a.n} tanda${a.n === 1 ? "" : "s"}`)
+      : stat("–", `Aprox. ${d} pasos`, "sin registros");
+  });
+  document.getElementById("short-stats").innerHTML = c1 + c2 + cards.join("");
+}
+
+/* ---------- Putting green: evolución por lugar ---------- */
+function drawPuttChart() {
+  const putts = puttEntries();
+  const dates = [...new Set(putts.map(e => e.date))].sort();
+  const dsets = Object.keys(PUTT_PLACES).map(p => {
+    const data = dates.map(d => {
+      const es = putts.filter(e => e.date === d && e.place === p);
+      return es.length ? mean(es.map(e => e.score)) : null;
+    });
+    if (!data.some(v => v != null)) return null;
+    return {
+      label: placeLabel(p), data,
+      borderColor: PLACE_COLOR[p], backgroundColor: PLACE_COLOR[p],
+      pointRadius: 4, borderWidth: 2.5, tension: .3, spanGaps: true
+    };
+  }).filter(Boolean);
+  dsets.push({
+    label: "Par (2 putts/hoyo)", data: dates.map(() => 0),
+    borderColor: "rgba(255,255,255,.35)", backgroundColor: "rgba(255,255,255,.35)",
+    borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5
+  });
+
+  makeChart("chart-putt", {
+    type: "line",
+    data: { labels: dates, datasets: dsets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "top", labels: { boxWidth: 18 } },
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? "" : `${c.dataset.label}: ${signedF(c.parsed.y, 1)}` } }
+      },
+      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: "Score vs par (menos es mejor)" } }) }
+    }
+  });
+}
+
+function renderPuttPlaces() {
+  const el = document.getElementById("putt-places");
+  const putts = puttEntries();
+  if (!putts.length) { el.innerHTML = `<p class="muted" style="font-size:13px">Aún no registras vueltas al putting green.</p>`; return; }
+  const rows = Object.keys(PUTT_PLACES).map(p => {
+    const es = puttEntries(p);
+    if (!es.length) return "";
+    const scores = es.map(e => e.score);
+    const last3 = scores.slice(-3);
+    const pph = es.map(puttPerHole).filter(x => x != null);
+    return `<tr>
+      <td class="club-cell">${placeLabel(p)}</td>
+      <td class="num">${es.length}</td>
+      <td class="num">${signedF(mean(scores), 1)}</td>
+      <td class="num">${signedF(Math.min(...scores), 0)}</td>
+      <td class="num">${signedF(mean(last3), 1)}</td>
+      <td class="num">${pph.length ? fmt(mean(pph), 2) : "–"}</td>
+      <td>${trendTxt(trendOf(scores, false, 0.7), " golpes")}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <thead><tr><th>Green</th><th class="num">Vueltas</th><th class="num">Promedio</th><th class="num">Mejor</th><th class="num">Últ. 3</th><th class="num">Putts/hoyo</th><th>Tendencia</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+/* ---------- Aproximaciones: evolución por distancia ---------- */
+function drawApprChart() {
+  const all = apprEntries();
+  const dates = [...new Set(all.map(e => e.date))].sort();
+  const dsets = APPR_DISTS.map(d => {
+    const data = dates.map(dt => {
+      const es = all.filter(e => e.date === dt && e.dist === d);
+      return es.length ? mean(es.map(apprPct)) : null;
+    });
+    if (!data.some(v => v != null)) return null;
+    return {
+      label: `${d} pasos`, data,
+      borderColor: DIST_COLOR[d], backgroundColor: DIST_COLOR[d] === COLORS.greenL ? "rgba(91,191,134,.15)" : "rgba(212,161,58,.12)",
+      fill: true, pointRadius: 4, borderWidth: 2.5, tension: .3, spanGaps: true
+    };
+  }).filter(Boolean);
+
+  makeChart("chart-appr", {
+    type: "line",
+    data: { labels: dates, datasets: dsets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "top", labels: { boxWidth: 18 } },
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? "" : `${c.dataset.label}: ${fmt(c.parsed.y, 0)}% en green` } }
+      },
+      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: "% de bolas en green" }, suggestedMin: 0, suggestedMax: 100 }) }
+    }
+  });
+}
+
+function apprClubsUsed() {
+  return [...new Set(apprEntries().map(e => e.club))].sort((a, b) => clubSortIndex(a) - clubSortIndex(b));
+}
+
+function drawApprClubChart() {
+  const clubs = apprClubsUsed();
+  makeChart("chart-appr-club", {
+    type: "bar",
+    data: {
+      labels: clubs.map(clubLabel),
+      datasets: APPR_DISTS.map(d => ({
+        label: `${d} pasos`,
+        data: clubs.map(c => apprAgg(apprEntries(d, c)).pct),
+        backgroundColor: d === 10 ? "rgba(91,191,134,.55)" : "rgba(212,161,58,.55)",
+        borderColor: DIST_COLOR[d], borderWidth: 1.5
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "top" },
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? "" : `${c.dataset.label}: ${fmt(c.parsed.y, 0)}%` } }
+      },
+      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: "% en green" }, beginAtZero: true, suggestedMax: 100 }) }
+    }
+  });
+}
+
+function renderApprClubTable() {
+  const el = document.getElementById("appr-club-table");
+  const clubs = apprClubsUsed();
+  if (!clubs.length) { el.innerHTML = `<p class="muted" style="font-size:13px">Aún no registras tandas de aproximación.</p>`; return; }
+  const rows = clubs.map(c => {
+    const cells = APPR_DISTS.map(d => {
+      const a = apprAgg(apprEntries(d, c));
+      return `<td>${a.t ? apprBadge(a.pct, `${a.h}/${a.t}`) : "–"}</td>`;
+    }).join("");
+    const tot = apprAgg(apprEntries(null, c));
+    const tr = trendOf(apprEntries(null, c).map(apprPct), true, 7);
+    return `<tr><td class="club-cell">${clubLabel(c)}</td>${cells}<td>${apprBadge(tot.pct, `${tot.h}/${tot.t}`)}</td><td>${trendTxt(tr, " pts")}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <thead><tr><th>Palo</th>${APPR_DISTS.map(d => `<th>${d} pasos</th>`).join("")}<th>Total</th><th>Tendencia</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+/* ---------- Lecturas / insights del juego corto ---------- */
+function shortInsights() {
+  const out = [];
+  const putts = puttEntries();
+  const scores = putts.map(e => e.score);
+
+  // 1. Tendencia global del putting
+  if (putts.length >= 3) {
+    const tr = trendOf(scores, false, 0.7);
+    if (tr && tr.dir === "up") out.push({ cls: "strength", t: "Tu putting va mejorando", b: `A lo largo de tus ${putts.length} vueltas el score baja unos <b>${fmt(Math.abs(tr.total), 1)} golpes</b>. Promedio histórico ${signedF(mean(scores), 1)}, últimas 3 ${signedF(mean(scores.slice(-3)), 1)}.` });
+    else if (tr && tr.dir === "down") out.push({ cls: "improve", t: "El putting se está enfriando", b: `El score sube unos <b>${fmt(Math.abs(tr.total), 1)} golpes</b> en el conjunto de tus vueltas. Últimas 3: ${signedF(mean(scores.slice(-3)), 1)} vs histórico ${signedF(mean(scores), 1)}.` });
+    else if (tr) out.push({ cls: "pattern", t: "Putting estable", b: `Tus vueltas se mueven alrededor de ${signedF(mean(scores), 1)} respecto al par. Para bajar de ahí, apunta al control de distancia en los putts largos: es lo que evita el tercer putt.` });
+  } else if (putts.length) {
+    out.push({ cls: "pattern", t: "Pocas vueltas de putting todavía", b: `Con ${putts.length} vuelta${putts.length === 1 ? "" : "s"} aún no hay tendencia. Desde 3 vueltas empiezo a calcularla.` });
+  }
+
+  // 2. Comparación entre putting greens (mínimo 2 vueltas por green)
+  const places = Object.keys(PUTT_PLACES)
+    .map(p => ({ p, es: puttEntries(p) }))
+    .filter(x => x.es.length >= 2)
+    .map(x => ({ p: x.p, n: x.es.length, avg: mean(x.es.map(e => e.score)) }));
+  if (places.length >= 2) {
+    const best = places.reduce((a, b) => b.avg < a.avg ? b : a);
+    const worst = places.reduce((a, b) => b.avg > a.avg ? b : a);
+    const diff = worst.avg - best.avg;
+    if (diff >= 1) {
+      out.push({
+        cls: "pattern", t: `Rindes distinto según el green`,
+        b: `En <b>${placeLabel(best.p)}</b> promedias ${signedF(best.avg, 1)} (${best.n} vueltas) y en <b>${placeLabel(worst.p)}</b> ${signedF(worst.avg, 1)} (${worst.n}). ${fmt(diff, 1)} golpes de diferencia: puede ser velocidad o pendiente distinta. Entrenar en el más difícil te hace más completo; medir tu progreso en el mismo green te da una serie más limpia.`
+      });
+    }
+  }
+
+  // 3. Putting green vs putts en cancha (si hay rondas importadas y hoyos registrados)
+  const pph = putts.map(puttPerHole).filter(x => x != null);
+  if (pph.length >= 2 && state.rounds.length) {
+    const holes = state.rounds.reduce((s, r) => s + (r.holesCompleted || 0), 0);
+    const rp = state.rounds.reduce((s, r) => s + (r.stats.putts || 0), 0);
+    if (holes && rp) {
+      const inCourse = rp / holes, inGreen = mean(pph);
+      const d = inCourse - inGreen;
+      out.push({
+        cls: d > 0.25 ? "improve" : "strength",
+        t: "Putting green vs cancha",
+        b: `En el putting green promedias <b>${fmt(inGreen, 2)} putts por hoyo</b> y en cancha <b>${fmt(inCourse, 2)}</b> (${rp} putts en ${holes} hoyos). ${d > 0.25
+          ? "La diferencia sugiere que el problema en cancha no es el golpe de putt, sino llegar lejos del hoyo o leer greens desconocidos: gana más practicando aproximación y putts largos de dos velocidades."
+          : "Trasladas bien lo que entrenas al campo."}`
+      });
+    }
+  }
+
+  // 4. 10 vs 20 pasos
+  const a10 = apprAgg(apprEntries(10)), a20 = apprAgg(apprEntries(20));
+  if (a10.t >= 10 && a20.t >= 10) {
+    const drop = a10.pct - a20.pct;
+    if (drop >= 20) out.push({ cls: "improve", t: "Pierdes mucho al alejarte", b: `Desde 10 pasos aciertas el <b>${fmt(a10.pct, 0)}%</b> del green y desde 20 el <b>${fmt(a20.pct, 0)}%</b> (${fmt(drop, 0)} puntos menos). A 20 pasos el golpe ya pide un vuelo más largo: prueba un palo menos loft (chip corrido) antes que pegar más fuerte con el mismo.` });
+    else if (drop <= 5) out.push({ cls: "strength", t: "Mantienes el acierto a 20 pasos", b: `10 pasos: <b>${fmt(a10.pct, 0)}%</b> · 20 pasos: <b>${fmt(a20.pct, 0)}%</b>. Casi no pierdes al alejarte, señal de buen control de distancia. Sube la exigencia: cuenta solo las bolas que quedan a menos de 3 pasos de la bandera.` });
+    else out.push({ cls: "pattern", t: "Caída normal con la distancia", b: `10 pasos: <b>${fmt(a10.pct, 0)}%</b> · 20 pasos: <b>${fmt(a20.pct, 0)}%</b> (${fmt(drop, 0)} puntos de diferencia).` });
+  }
+
+  // 5. Mejor y peor palo por distancia (mínimo 20 bolas por palo)
+  APPR_DISTS.forEach(d => {
+    const rows = apprClubsUsed()
+      .map(c => ({ c, ...apprAgg(apprEntries(d, c)) }))
+      .filter(x => x.t >= 20);
+    if (rows.length < 2) return;
+    const best = rows.reduce((a, b) => b.pct > a.pct ? b : a);
+    const worst = rows.reduce((a, b) => b.pct < a.pct ? b : a);
+    if (best.pct - worst.pct >= 15) {
+      out.push({
+        cls: "strength", t: `A ${d} pasos, tu palo es ${clubLabel(best.c)}`,
+        b: `<b>${clubLabel(best.c)}: ${fmt(best.pct, 0)}%</b> (${best.h}/${best.t}) frente a ${clubLabel(worst.c)}: ${fmt(worst.pct, 0)}% (${worst.h}/${worst.t}). Si el golpe permite las dos opciones, saca el ${clubLabel(best.c)} y deja el otro para practicar, no para jugar.`
+      });
+    }
+  });
+
+  // 6. Consistencia entre tandas
+  APPR_DISTS.forEach(d => {
+    const pcts = apprEntries(d).map(apprPct);
+    if (pcts.length < 4) return;
+    const sd = std(pcts);
+    if (sd == null) return;
+    if (sd >= 20) out.push({ cls: "improve", t: `Tandas irregulares a ${d} pasos`, b: `Tus tandas van de ${fmt(Math.min(...pcts), 0)}% a ${fmt(Math.max(...pcts), 0)}% (desviación ±${fmt(sd, 0)} puntos). Días buenos y malos así suelen venir del contacto: fija una rutina de 3 bolas de calentamiento y anota con qué lie practicas.` });
+    else if (sd <= 10) out.push({ cls: "strength", t: `Muy regular a ${d} pasos`, b: `Tus ${pcts.length} tandas se mueven en ±${fmt(sd, 0)} puntos alrededor del ${fmt(mean(pcts), 0)}%. Ese nivel de repetición es el que se traslada a la cancha.` });
+  });
+
+  // 7. Récord de tanda
+  const allAppr = apprEntries();
+  if (allAppr.length >= 3) {
+    const best = allAppr.reduce((a, b) => (apprPct(b) > apprPct(a) ? b : a));
+    out.push({ cls: "pattern", t: "Tu mejor tanda", b: `<b>${best.hits}/${best.total}</b> desde ${best.dist} pasos con ${clubLabel(best.club)} el ${best.date}. Ese es tu techo actual: la meta es acercar el promedio a ese número, no superarlo un día suelto.` });
+  }
+
+  // 8. Volumen de datos
+  if (state.practice.length < 5) {
+    out.push({ cls: "pattern", t: "Sigue registrando", b: `Llevas ${state.practice.length} entrenamiento${state.practice.length === 1 ? "" : "s"}. Con 5–6 de cada ejercicio las tendencias y comparaciones entre palos empiezan a ser fiables.` });
+  }
+  return out;
+}
+
+function renderShortInsights() {
+  const el = document.getElementById("short-insights");
+  const ins = shortInsights();
+  el.innerHTML = ins.length
+    ? ins.map(i => `<div class="insight ${i.cls}"><div class="insight-title">${i.t}</div><div class="insight-body">${i.b}</div></div>`).join("")
+    : `<p class="muted" style="font-size:13px">Registra algunos entrenamientos más para ver lecturas aquí.</p>`;
+}
+
+/* ---------- Historial ---------- */
+function renderShortLog() {
+  document.querySelectorAll("[data-prfilter]").forEach(b => b.classList.toggle("active", b.dataset.prfilter === practiceFilter));
+  const list = practiceSorted().reverse()
+    .filter(e => practiceFilter === "all" || e.kind === practiceFilter);
+  const el = document.getElementById("short-log");
+  if (!list.length) { el.innerHTML = `<p class="muted" style="font-size:13px">Sin registros con este filtro.</p>`; return; }
+  const rows = list.map(e => {
+    const note = e.note ? `<div class="short-log-note">${e.note}</div>` : "";
+    if (e.kind === "putt") {
+      const pph = puttPerHole(e);
+      return `<tr>
+        <td>${e.date}</td>
+        <td class="club-cell">Putting green</td>
+        <td>${placeLabel(e.place)}${e.holes ? ` · ${e.holes} hoyos` : ""}${note}</td>
+        <td class="num"><span class="${e.score < 0 ? "pos" : e.score > 0 ? "neg" : ""}">${signedF(e.score, 0)}</span>${pph != null ? ` <span class="muted" style="font-size:11px">${fmt(pph, 2)}/hoyo</span>` : ""}</td>
+        <td><button class="btn-del" data-pr-del="${e.id}">×</button></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td>${e.date}</td>
+      <td class="club-cell">Aprox. ${e.dist} pasos</td>
+      <td>${clubLabel(e.club)}${note}</td>
+      <td class="num">${e.hits}/${e.total} ${apprBadge(apprPct(e), "")}</td>
+      <td><button class="btn-del" data-pr-del="${e.id}">×</button></td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <thead><tr><th>Fecha</th><th>Ejercicio</th><th>Detalle</th><th class="num">Resultado</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+/* ---------- Formulario ---------- */
+function syncPracticeForm() {
+  document.querySelectorAll("[data-prkind]").forEach(b => b.classList.toggle("active", b.dataset.prkind === prKind));
+  const isPutt = prKind === "putt";
+  document.querySelectorAll(".pr-putt").forEach(e => e.style.display = isPutt ? "" : "none");
+  document.querySelectorAll(".pr-appr").forEach(e => e.style.display = isPutt ? "none" : "");
+  document.getElementById("pr-help").innerHTML = isPutt
+    ? "Recorre el putting green entero contando 2 putts por hoyo como par y anota el total sobre/bajo par (ej. −2 si terminaste dos golpes bajo). Los hoyos son opcionales: si los anotas, calculo además tus putts por hoyo y los comparo con los de tus rondas."
+    : `Anota cuántas de las bolas quedaron dentro del green desde ${prKind === "a10" ? "10" : "20"} pasos, usando el mismo palo en toda la tanda.`;
+}
+
+function addPracticeEntry() {
+  const date = document.getElementById("pr-date").value || todayStr();
+  const note = document.getElementById("pr-note").value.trim();
+  const id = "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+  let entry;
+  if (prKind === "putt") {
+    const score = Math.round(+document.getElementById("pr-score").value || 0);
+    const holesRaw = Math.round(+document.getElementById("pr-holes").value || 0);
+    const holes = holesRaw >= 1 && holesRaw <= 36 ? holesRaw : null;
+    if (holes && score < -2 * holes) { alert(`Con ${holes} hoyos el mejor score posible es ${-holes} (1 putt por hoyo). Revisa el número.`); return; }
+    entry = { id, kind: "putt", date, place: document.getElementById("pr-place").value, score, holes, note };
+  } else {
+    const total = Math.max(1, Math.min(50, Math.round(+document.getElementById("pr-total").value || 10)));
+    const hits = Math.max(0, Math.min(total, Math.round(+document.getElementById("pr-hits").value || 0)));
+    document.getElementById("pr-total").value = total;
+    document.getElementById("pr-hits").value = hits;
+    entry = { id, kind: "appr", date, dist: prKind === "a10" ? 10 : 20, club: document.getElementById("pr-club").value, hits, total, note };
+  }
+  state.practice.push(entry);
+  save();
+  document.getElementById("pr-note").value = "";
+  renderAll(); // por si era el primer dato guardado en la app
+}
+
+/* ============================================================
    METAS POR PALO
    Meta = % de tiros que cumplen un criterio (en calle, o
    |side| ≤ X) dentro de una ventana móvil de N días, contando
@@ -1700,6 +2132,32 @@ function init() {
     if (row) { selectedRound = row.dataset.round; renderCourse(); }
   });
 
+  // Juego corto (putting green y aproximaciones)
+  document.getElementById("go-short").addEventListener("click", () => {
+    forceApp = true; renderAll(); goTab("short");
+  });
+  const prClub = document.getElementById("pr-club");
+  prClub.innerHTML = CLUB_ORDER.map(c => `<option value="${c}">${clubLabel(c)}</option>`).join("");
+  prClub.value = "sw";
+  const prDate = document.getElementById("pr-date");
+  prDate.value = todayStr();
+  prDate.max = todayStr();
+  document.querySelectorAll("[data-prkind]").forEach(b => b.addEventListener("click", () => {
+    prKind = b.dataset.prkind; syncPracticeForm();
+  }));
+  document.querySelectorAll("[data-prfilter]").forEach(b => b.addEventListener("click", () => {
+    practiceFilter = b.dataset.prfilter; renderShortLog();
+  }));
+  document.getElementById("pr-add").addEventListener("click", addPracticeEntry);
+  document.getElementById("short-log").addEventListener("click", e => {
+    const id = e.target.dataset.prDel;
+    if (!id) return;
+    if (!confirm("¿Eliminar este entrenamiento?")) return;
+    state.practice = state.practice.filter(x => x.id !== id);
+    save(); renderAll();
+  });
+  syncPracticeForm();
+
   // Metas
   document.getElementById("goal-type").addEventListener("change", e => {
     document.getElementById("goal-side-wrap").style.display = e.target.value === "side" ? "" : "none";
@@ -1745,14 +2203,15 @@ function init() {
     }
   });
   document.getElementById("clear-all").addEventListener("click", () => {
-    if (confirm("¿Borrar TODOS los datos? Esto no se puede deshacer.")) {
-      state.sessions = []; dateFilter = { preset: "all", from: null, to: null }; save(); renderAll();
+    if (confirm("¿Borrar TODOS los datos (sesiones, rondas, metas y entrenamientos)? Esto no se puede deshacer.")) {
+      state.sessions = []; state.rounds = []; state.goals = []; state.practice = [];
+      dateFilter = { preset: "all", from: null, to: null }; save(); renderAll();
     }
   });
 
   // Export / import JSON (respaldo)
   document.getElementById("export-data").addEventListener("click", () => {
-    const payload = { version: 2, sessions: state.sessions, goals: state.goals, rounds: state.rounds, prefs: state.prefs };
+    const payload = { version: 3, sessions: state.sessions, goals: state.goals, rounds: state.rounds, practice: state.practice, prefs: state.prefs };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1771,6 +2230,7 @@ function init() {
           state.sessions = data.sessions;
           if (Array.isArray(data.goals)) state.goals = data.goals;
           if (Array.isArray(data.rounds)) state.rounds = data.rounds;
+          if (Array.isArray(data.practice)) state.practice = data.practice;
           if (data.prefs) state.prefs = { ...state.prefs, ...data.prefs };
           save(); renderAll(); alert("Datos restaurados.");
         } else alert("Archivo de respaldo inválido.");

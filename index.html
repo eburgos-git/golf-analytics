@@ -48,7 +48,9 @@
   <div class="empty-actions">
     <button class="btn-primary upload-trigger">Seleccionar archivos CSV</button>
     <button class="ghost-btn" id="load-demo">Ver con datos de ejemplo</button>
+    <button class="ghost-btn" id="go-short">🎯 Registrar juego corto</button>
   </div>
+  <p class="help-note" style="margin:0">¿Vienes de la cancha de práctica? El putting green y las aproximaciones se anotan a mano en la pestaña <b>Corto</b>, sin necesidad de cargar CSV.</p>
   <p class="help-note">Tus datos se guardan solo en este dispositivo (en el navegador). Nada se sube a internet.</p>
 </div>
 
@@ -197,6 +199,93 @@
     <div id="goals-list"></div>
   </section>
 
+  <!-- JUEGO CORTO -->
+  <section class="tab-panel" id="tab-short">
+    <h2 class="section">Juego corto y putt</h2>
+
+    <div class="card">
+      <h3>＋ Registrar entrenamiento</h3>
+      <div class="seg" id="pr-kind" role="group" aria-label="Tipo de ejercicio" style="margin-bottom:12px;flex-wrap:wrap">
+        <button data-prkind="putt">Putting green</button>
+        <button data-prkind="a10">Aprox. 10 pasos</button>
+        <button data-prkind="a20">Aprox. 20 pasos</button>
+      </div>
+      <div class="form-grid">
+        <label>Fecha
+          <input id="pr-date" type="date">
+        </label>
+        <label class="pr-putt">Putting green
+          <select id="pr-place">
+            <option value="valle1">Valle 1</option>
+            <option value="valle10">Valle 10</option>
+            <option value="driving">Driving</option>
+          </select>
+        </label>
+        <label class="pr-putt">Score (vs par del green)
+          <input id="pr-score" type="number" step="1" value="0">
+        </label>
+        <label class="pr-putt">Hoyos del recorrido (opcional)
+          <input id="pr-holes" type="number" min="1" max="36" step="1" placeholder="ej. 9">
+        </label>
+        <label class="pr-appr">Palo usado
+          <select id="pr-club"></select>
+        </label>
+        <label class="pr-appr">Bolas que quedaron en green
+          <input id="pr-hits" type="number" min="0" max="50" step="1" value="5">
+        </label>
+        <label class="pr-appr">De cuántos tiros
+          <input id="pr-total" type="number" min="1" max="50" step="1" value="10">
+        </label>
+        <label class="pr-note-wrap">Nota (opcional)
+          <input id="pr-note" type="text" placeholder="viento, bandera atrás, green duro…">
+        </label>
+      </div>
+      <button class="btn-primary" id="pr-add" style="margin-top:12px">Guardar entrenamiento</button>
+      <p class="help-note" id="pr-help"></p>
+    </div>
+
+    <p class="muted" id="short-empty" style="padding:0 4px">Sin entrenamientos registrados aún. Guarda el primero con el formulario de arriba.</p>
+
+    <div id="short-content" style="display:none">
+      <div class="stat-grid" id="short-stats"></div>
+
+      <div class="card" id="card-putt">
+        <h3>Putting green — score vs par</h3>
+        <div class="chart-wrap"><canvas id="chart-putt"></canvas></div>
+        <div class="table-scroll" id="putt-places"></div>
+        <p class="help-note">Par del putting green = 2 putts por hoyo. La línea punteada es el par: <b>más abajo es mejor</b>. Si registras varias vueltas el mismo día y lugar, el gráfico muestra el promedio de ese día.</p>
+      </div>
+
+      <div class="card" id="card-appr">
+        <h3>Aproximación — % de bolas en green</h3>
+        <div class="chart-wrap"><canvas id="chart-appr"></canvas></div>
+        <p class="help-note">Cada punto es una tanda (por defecto 10 tiros). Si hiciste varias tandas de la misma distancia el mismo día, se promedian.</p>
+      </div>
+
+      <div class="card" id="card-appr-club">
+        <h3>Rendimiento por palo</h3>
+        <div class="chart-wrap"><canvas id="chart-appr-club"></canvas></div>
+        <div class="table-scroll" id="appr-club-table"></div>
+        <p class="help-note">Compara con qué palo aciertas más el green a cada distancia. Con menos de 20 tiros acumulados el porcentaje aún es poco fiable.</p>
+      </div>
+
+      <div class="card ins-col">
+        <h3>💡 Lecturas de tu juego corto</h3>
+        <div id="short-insights"></div>
+      </div>
+
+      <div class="card">
+        <h3>Historial</h3>
+        <div class="seg" id="pr-filter" role="group" aria-label="Filtro de historial" style="margin-bottom:12px">
+          <button data-prfilter="all">Todo</button>
+          <button data-prfilter="putt">Putting</button>
+          <button data-prfilter="appr">Aproximación</button>
+        </div>
+        <div class="table-scroll" id="short-log"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- CANCHA -->
   <section class="tab-panel" id="tab-course">
     <h2 class="section">Cancha</h2>
@@ -330,10 +419,11 @@
   <button class="tab-btn active" data-tab="overview"><span class="ic">📊</span>Resumen</button>
   <button class="tab-btn" data-tab="club"><span class="ic">🏌️</span>Palo</button>
   <button class="tab-btn" data-tab="evolution"><span class="ic">📈</span>Evolución</button>
-  <button class="tab-btn" data-tab="patterns"><span class="ic">🎯</span>Patrones</button>
+  <button class="tab-btn" data-tab="patterns"><span class="ic">💡</span>Patrones</button>
   <button class="tab-btn" data-tab="goals"><span class="ic">🚩</span>Metas</button>
+  <button class="tab-btn" data-tab="short"><span class="ic">🎯</span>Corto</button>
   <button class="tab-btn" data-tab="course"><span class="ic">⛳</span>Cancha</button>
-  <button class="tab-btn" data-tab="benchmark"><span class="ic">🏆</span>Benchmark</button>
+  <button class="tab-btn" data-tab="benchmark"><span class="ic">🏆</span>Bench</button>
   <button class="tab-btn" data-tab="data"><span class="ic">⚙️</span>Datos</button>
 </nav>
 
