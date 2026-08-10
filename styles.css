@@ -187,8 +187,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Juego corto */
 .short-log-note { font-size: 11px; color: var(--muted); }
-#short-log .btn-del { padding: 4px 9px; font-size: 12px; }
-#short-log table, #putt-places table, #appr-club-table table { min-width: 420px; }
+.btn-edit { background: var(--card2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600; }
+/* Historial: lista (no tabla) para que editar/eliminar quepan en pantalla de teléfono */
+.pr-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.pr-row:last-child { border-bottom: none; }
+.pr-main { flex: 1; min-width: 0; }
+.pr-title { font-size: 13px; }
+.pr-sub { font-size: 11px; color: var(--muted); }
+.pr-res { text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pr-unit { font-size: 11px; color: var(--muted); }
+.pr-row .btn-edit, .pr-row .btn-del { padding: 6px 9px; font-size: 12px; flex: none; }
+#pr-form-card.editing { outline: 2px solid var(--gold); }
+#pr-form-card.editing #pr-form-title { color: var(--gold); }
+#pr-legacy .round-row { cursor: default; }
+#putt-places table, #appr-club-table table { min-width: 420px; }
 
 /* Cancha (rondas) */
 .round-row {

@@ -203,8 +203,8 @@
   <section class="tab-panel" id="tab-short">
     <h2 class="section">Juego corto y putt</h2>
 
-    <div class="card">
-      <h3>＋ Registrar entrenamiento</h3>
+    <div class="card" id="pr-form-card">
+      <h3 id="pr-form-title">＋ Registrar entrenamiento</h3>
       <div class="seg" id="pr-kind" role="group" aria-label="Tipo de ejercicio" style="margin-bottom:12px;flex-wrap:wrap">
         <button data-prkind="putt">Putting green</button>
         <button data-prkind="a10">Aprox. 10 pasos</button>
@@ -221,11 +221,11 @@
             <option value="driving">Driving</option>
           </select>
         </label>
+        <label class="pr-putt">Hoyos del recorrido
+          <input id="pr-holes" type="number" min="1" max="36" step="1" placeholder="ej. 9" required>
+        </label>
         <label class="pr-putt">Score (vs par del green)
           <input id="pr-score" type="number" step="1" value="0">
-        </label>
-        <label class="pr-putt">Hoyos del recorrido (opcional)
-          <input id="pr-holes" type="number" min="1" max="36" step="1" placeholder="ej. 9">
         </label>
         <label class="pr-appr">Palo usado
           <select id="pr-club"></select>
@@ -240,20 +240,24 @@
           <input id="pr-note" type="text" placeholder="viento, bandera atrás, green duro…">
         </label>
       </div>
-      <button class="btn-primary" id="pr-add" style="margin-top:12px">Guardar entrenamiento</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn-primary" id="pr-add">Guardar entrenamiento</button>
+        <button class="ghost-btn" id="pr-cancel" style="display:none">Cancelar edición</button>
+      </div>
       <p class="help-note" id="pr-help"></p>
     </div>
 
     <p class="muted" id="short-empty" style="padding:0 4px">Sin entrenamientos registrados aún. Guarda el primero con el formulario de arriba.</p>
 
     <div id="short-content" style="display:none">
+      <div class="card" id="pr-legacy" style="display:none"></div>
       <div class="stat-grid" id="short-stats"></div>
 
       <div class="card" id="card-putt">
-        <h3>Putting green — score vs par</h3>
+        <h3>Putting green — putts por hoyo</h3>
         <div class="chart-wrap"><canvas id="chart-putt"></canvas></div>
         <div class="table-scroll" id="putt-places"></div>
-        <p class="help-note">Par del putting green = 2 putts por hoyo. La línea punteada es el par: <b>más abajo es mejor</b>. Si registras varias vueltas el mismo día y lugar, el gráfico muestra el promedio de ese día.</p>
+        <p class="help-note">Se mide en <b>putts por hoyo</b>, no en el total sobre par, para que una vuelta de 9 y una de 18 sean comparables. La línea punteada es el par (2.00 putts/hoyo): <b>más abajo es mejor</b>. Si registras varias vueltas el mismo día y lugar, el gráfico muestra el promedio de ese día.</p>
       </div>
 
       <div class="card" id="card-appr">
@@ -281,7 +285,7 @@
           <button data-prfilter="putt">Putting</button>
           <button data-prfilter="appr">Aproximación</button>
         </div>
-        <div class="table-scroll" id="short-log"></div>
+        <div id="short-log"></div>
       </div>
     </div>
   </section>

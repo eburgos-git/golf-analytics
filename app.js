@@ -1418,8 +1418,10 @@ function handleGarminFiles(fileList) {
 /* ============================================================
    JUEGO CORTO — putting green y aproximaciones
    Entrenamientos registrados a mano (no vienen del monitor):
-     · putt: {id, kind:"putt", date, place, score (vs par), holes?, note}
-       Par del putting green = 2 putts por hoyo, así que score < 0 es mejor.
+     · putt: {id, kind:"putt", date, place, score (vs par), holes, note}
+       Par del putting green = 2 putts por hoyo. Como no siempre se juega
+       el mismo número de hoyos, el análisis usa PUTTS POR HOYO
+       ((2·hoyos + score) / hoyos), que sí es comparable entre vueltas.
      · appr: {id, kind:"appr", date, dist (pasos), club, hits, total, note}
    Independientes del filtro global de fechas (son series propias).
    ============================================================ */
@@ -1437,6 +1439,12 @@ function practiceSorted() {
 function puttEntries(place) {
   return practiceSorted().filter(e => e.kind === "putt" && (!place || e.place === place));
 }
+/* Solo las vueltas con hoyos registrados: son las únicas que entran al análisis.
+   Las vueltas antiguas sin hoyos quedan fuera hasta que se editen. */
+function puttEntriesValid(place) {
+  return puttEntries(place).filter(e => e.holes > 0);
+}
+function puttLegacy() { return puttEntries().filter(e => !(e.holes > 0)); }
 function apprEntries(dist, club) {
   return practiceSorted().filter(e => e.kind === "appr" && (!dist || e.dist === dist) && (!club || e.club === club));
 }
@@ -1448,7 +1456,8 @@ function apprAgg(list) {
 }
 function apprPct(e) { return e.total ? 100 * e.hits / e.total : null; }
 /* Putts por hoyo de una vuelta al putting green (par = 2 por hoyo) */
-function puttPerHole(e) { return e.holes ? (2 * e.holes + e.score) / e.holes : null; }
+function puttPerHole(e) { return e.holes > 0 ? (2 * e.holes + e.score) / e.holes : null; }
+const PUTT_PAR = 2; // putts por hoyo que se consideran par
 function apprBadge(pct, t) {
   if (pct == null) return "–";
   const cls = pct >= 70 ? "good" : pct >= 50 ? "ok" : pct >= 30 ? "warn" : "bad";
@@ -1467,10 +1476,10 @@ function trendOf(vals, higherBetter, eps) {
   const better = higherBetter ? total > 0 : total < 0;
   return { total, dir: better ? "up" : "down" };
 }
-function trendTxt(tr, unit) {
+function trendTxt(tr, unit, dec = 1) {
   if (!tr) return `<span class="muted">pocos datos</span>`;
   if (tr.dir === "flat") return `<span class="muted">→ estable</span>`;
-  const mag = `${fmt(Math.abs(tr.total), 1)}${unit}`;
+  const mag = `${fmt(Math.abs(tr.total), dec)}${unit}`;
   return tr.dir === "up"
     ? `<span class="pos">↗ mejora ${mag}</span>`
     : `<span class="neg">↘ empeora ${mag}</span>`;
@@ -1489,9 +1498,10 @@ function renderShort() {
   if (!has) return;
 
   renderShortStats();
+  renderPuttLegacy();
 
-  // Cada bloque aparece solo cuando ese ejercicio tiene registros
-  const hasPutt = puttEntries().length > 0;
+  // Cada bloque aparece solo cuando ese ejercicio tiene registros analizables
+  const hasPutt = puttEntriesValid().length > 0;
   const hasAppr = apprEntries().length > 0;
   document.getElementById("card-putt").style.display = hasPutt ? "" : "none";
   document.getElementById("card-appr").style.display = hasAppr ? "" : "none";
@@ -1503,18 +1513,30 @@ function renderShort() {
   renderShortLog();
 }
 
+/* ---------- Aviso de vueltas antiguas sin hoyos ---------- */
+function renderPuttLegacy() {
+  const el = document.getElementById("pr-legacy");
+  const old = puttLegacy();
+  el.style.display = old.length ? "" : "none";
+  if (!old.length) return;
+  el.innerHTML = `<h3 style="color:var(--gold)">⚠️ ${old.length} vuelta${old.length === 1 ? "" : "s"} sin hoyos registrados</h3>
+    <p style="font-size:14px;margin:6px 0">Ahora el análisis del putting se hace en <b>putts por hoyo</b>, así que necesito saber cuántos hoyos tuvo cada recorrido. Estas vueltas quedan fuera de los promedios hasta que las completes:</p>
+    <div>${old.map(e => `<div class="round-row"><div class="round-info"><div><b>${e.date}</b> · ${placeLabel(e.place)} · score ${signedF(e.score, 0)}</div></div><button class="btn-edit" data-pr-edit="${e.id}">Completar</button></div>`).join("")}</div>`;
+}
+
 /* ---------- Tarjetas de resumen ---------- */
 function renderShortStats() {
   const stat = (v, l, s) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
-  const putts = puttEntries();
-  let c1 = stat("–", "Vueltas de putting", "sin registros"), c2 = stat("–", "Putting · últimas 5", "");
+  const putts = puttEntriesValid();
+  let c1 = stat("–", "Vueltas de putting", "sin registros"), c2 = stat("–", "Putts por hoyo", "");
   if (putts.length) {
-    const scores = putts.map(e => e.score);
-    const best = Math.min(...scores);
-    const bestE = putts.filter(e => e.score === best).pop();
-    const last5 = scores.slice(-5);
-    c1 = stat(putts.length, "Vueltas de putting", `mejor ${signedF(best, 0)} · ${placeLabel(bestE.place)} · ${bestE.date}`);
-    c2 = stat(signedF(mean(last5), 1), `Putting · últimas ${last5.length}`, `histórico ${signedF(mean(scores), 1)} en ${putts.length} vueltas`);
+    const pph = putts.map(puttPerHole);
+    const best = Math.min(...pph);
+    const bestE = putts.filter(e => puttPerHole(e) === best).pop();
+    const last5 = pph.slice(-5);
+    const holes = putts.reduce((s, e) => s + e.holes, 0);
+    c1 = stat(putts.length, "Vueltas de putting", `${holes} hoyos · mejor ${fmt(best, 2)}/hoyo en ${placeLabel(bestE.place)}`);
+    c2 = stat(fmt(mean(last5), 2), `Putts/hoyo · últimas ${last5.length}`, `histórico ${fmt(mean(pph), 2)} en ${putts.length} vueltas`);
   }
   const cards = APPR_DISTS.map(d => {
     const a = apprAgg(apprEntries(d));
@@ -1527,12 +1549,12 @@ function renderShortStats() {
 
 /* ---------- Putting green: evolución por lugar ---------- */
 function drawPuttChart() {
-  const putts = puttEntries();
+  const putts = puttEntriesValid();
   const dates = [...new Set(putts.map(e => e.date))].sort();
   const dsets = Object.keys(PUTT_PLACES).map(p => {
     const data = dates.map(d => {
       const es = putts.filter(e => e.date === d && e.place === p);
-      return es.length ? mean(es.map(e => e.score)) : null;
+      return es.length ? mean(es.map(puttPerHole)) : null;
     });
     if (!data.some(v => v != null)) return null;
     return {
@@ -1542,7 +1564,7 @@ function drawPuttChart() {
     };
   }).filter(Boolean);
   dsets.push({
-    label: "Par (2 putts/hoyo)", data: dates.map(() => 0),
+    label: "Par (2.00/hoyo)", data: dates.map(() => PUTT_PAR),
     borderColor: "rgba(255,255,255,.35)", backgroundColor: "rgba(255,255,255,.35)",
     borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5
   });
@@ -1554,35 +1576,34 @@ function drawPuttChart() {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { position: "top", labels: { boxWidth: 18 } },
-        tooltip: { callbacks: { label: c => c.parsed.y == null ? "" : `${c.dataset.label}: ${signedF(c.parsed.y, 1)}` } }
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? "" : `${c.dataset.label}: ${fmt(c.parsed.y, 2)} putts/hoyo` } }
       },
-      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: "Score vs par (menos es mejor)" } }) }
+      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: "Putts por hoyo (menos es mejor)" } }) }
     }
   });
 }
 
 function renderPuttPlaces() {
   const el = document.getElementById("putt-places");
-  const putts = puttEntries();
+  const putts = puttEntriesValid();
   if (!putts.length) { el.innerHTML = `<p class="muted" style="font-size:13px">Aún no registras vueltas al putting green.</p>`; return; }
   const rows = Object.keys(PUTT_PLACES).map(p => {
-    const es = puttEntries(p);
+    const es = puttEntriesValid(p);
     if (!es.length) return "";
-    const scores = es.map(e => e.score);
-    const last3 = scores.slice(-3);
-    const pph = es.map(puttPerHole).filter(x => x != null);
+    const pph = es.map(puttPerHole);
+    const holes = es.reduce((s, e) => s + e.holes, 0);
     return `<tr>
       <td class="club-cell">${placeLabel(p)}</td>
       <td class="num">${es.length}</td>
-      <td class="num">${signedF(mean(scores), 1)}</td>
-      <td class="num">${signedF(Math.min(...scores), 0)}</td>
-      <td class="num">${signedF(mean(last3), 1)}</td>
-      <td class="num">${pph.length ? fmt(mean(pph), 2) : "–"}</td>
-      <td>${trendTxt(trendOf(scores, false, 0.7), " golpes")}</td>
+      <td class="num muted">${holes}</td>
+      <td class="num">${fmt(mean(pph), 2)}</td>
+      <td class="num">${fmt(Math.min(...pph), 2)}</td>
+      <td class="num">${fmt(mean(pph.slice(-3)), 2)}</td>
+      <td>${trendTxt(trendOf(pph, false, 0.06), " putts/hoyo", 2)}</td>
     </tr>`;
   }).join("");
   el.innerHTML = `<table>
-    <thead><tr><th>Green</th><th class="num">Vueltas</th><th class="num">Promedio</th><th class="num">Mejor</th><th class="num">Últ. 3</th><th class="num">Putts/hoyo</th><th>Tendencia</th></tr></thead>
+    <thead><tr><th>Green</th><th class="num">Vueltas</th><th class="num">Hoyos</th><th class="num">Putts/hoyo</th><th class="num">Mejor</th><th class="num">Últ. 3</th><th>Tendencia</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }
 
@@ -1666,38 +1687,38 @@ function renderApprClubTable() {
 /* ---------- Lecturas / insights del juego corto ---------- */
 function shortInsights() {
   const out = [];
-  const putts = puttEntries();
-  const scores = putts.map(e => e.score);
+  const putts = puttEntriesValid();
+  const pph = putts.map(puttPerHole);
 
-  // 1. Tendencia global del putting
+  // 1. Tendencia global del putting (en putts/hoyo)
   if (putts.length >= 3) {
-    const tr = trendOf(scores, false, 0.7);
-    if (tr && tr.dir === "up") out.push({ cls: "strength", t: "Tu putting va mejorando", b: `A lo largo de tus ${putts.length} vueltas el score baja unos <b>${fmt(Math.abs(tr.total), 1)} golpes</b>. Promedio histórico ${signedF(mean(scores), 1)}, últimas 3 ${signedF(mean(scores.slice(-3)), 1)}.` });
-    else if (tr && tr.dir === "down") out.push({ cls: "improve", t: "El putting se está enfriando", b: `El score sube unos <b>${fmt(Math.abs(tr.total), 1)} golpes</b> en el conjunto de tus vueltas. Últimas 3: ${signedF(mean(scores.slice(-3)), 1)} vs histórico ${signedF(mean(scores), 1)}.` });
-    else if (tr) out.push({ cls: "pattern", t: "Putting estable", b: `Tus vueltas se mueven alrededor de ${signedF(mean(scores), 1)} respecto al par. Para bajar de ahí, apunta al control de distancia en los putts largos: es lo que evita el tercer putt.` });
+    const holes = putts.reduce((s, e) => s + e.holes, 0);
+    const tr = trendOf(pph, false, 0.06);
+    if (tr && tr.dir === "up") out.push({ cls: "strength", t: "Tu putting va mejorando", b: `A lo largo de tus ${putts.length} vueltas (${holes} hoyos) bajas unos <b>${fmt(Math.abs(tr.total), 2)} putts por hoyo</b>. Promedio histórico ${fmt(mean(pph), 2)}, últimas 3 ${fmt(mean(pph.slice(-3)), 2)}.` });
+    else if (tr && tr.dir === "down") out.push({ cls: "improve", t: "El putting se está enfriando", b: `Subes unos <b>${fmt(Math.abs(tr.total), 2)} putts por hoyo</b> en el conjunto de tus vueltas. Últimas 3: ${fmt(mean(pph.slice(-3)), 2)} vs histórico ${fmt(mean(pph), 2)}.` });
+    else if (tr) out.push({ cls: "pattern", t: "Putting estable", b: `Tus vueltas se mueven alrededor de <b>${fmt(mean(pph), 2)} putts por hoyo</b>. Para bajar de ahí, apunta al control de distancia en los putts largos: es lo que evita el tercer putt.` });
   } else if (putts.length) {
     out.push({ cls: "pattern", t: "Pocas vueltas de putting todavía", b: `Con ${putts.length} vuelta${putts.length === 1 ? "" : "s"} aún no hay tendencia. Desde 3 vueltas empiezo a calcularla.` });
   }
 
   // 2. Comparación entre putting greens (mínimo 2 vueltas por green)
   const places = Object.keys(PUTT_PLACES)
-    .map(p => ({ p, es: puttEntries(p) }))
+    .map(p => ({ p, es: puttEntriesValid(p) }))
     .filter(x => x.es.length >= 2)
-    .map(x => ({ p: x.p, n: x.es.length, avg: mean(x.es.map(e => e.score)) }));
+    .map(x => ({ p: x.p, n: x.es.length, avg: mean(x.es.map(puttPerHole)) }));
   if (places.length >= 2) {
     const best = places.reduce((a, b) => b.avg < a.avg ? b : a);
     const worst = places.reduce((a, b) => b.avg > a.avg ? b : a);
     const diff = worst.avg - best.avg;
-    if (diff >= 1) {
+    if (diff >= 0.1) {
       out.push({
         cls: "pattern", t: `Rindes distinto según el green`,
-        b: `En <b>${placeLabel(best.p)}</b> promedias ${signedF(best.avg, 1)} (${best.n} vueltas) y en <b>${placeLabel(worst.p)}</b> ${signedF(worst.avg, 1)} (${worst.n}). ${fmt(diff, 1)} golpes de diferencia: puede ser velocidad o pendiente distinta. Entrenar en el más difícil te hace más completo; medir tu progreso en el mismo green te da una serie más limpia.`
+        b: `En <b>${placeLabel(best.p)}</b> promedias ${fmt(best.avg, 2)} putts/hoyo (${best.n} vueltas) y en <b>${placeLabel(worst.p)}</b> ${fmt(worst.avg, 2)} (${worst.n}). ${fmt(diff, 2)} de diferencia por hoyo: puede ser velocidad o pendiente distinta. Entrenar en el más difícil te hace más completo; medir tu progreso en el mismo green te da una serie más limpia.`
       });
     }
   }
 
-  // 3. Putting green vs putts en cancha (si hay rondas importadas y hoyos registrados)
-  const pph = putts.map(puttPerHole).filter(x => x != null);
+  // 3. Putting green vs putts en cancha (si hay rondas importadas)
   if (pph.length >= 2 && state.rounds.length) {
     const holes = state.rounds.reduce((s, r) => s + (r.holesCompleted || 0), 0);
     const rp = state.rounds.reduce((s, r) => s + (r.stats.putts || 0), 0);
@@ -1778,61 +1799,115 @@ function renderShortLog() {
     .filter(e => practiceFilter === "all" || e.kind === practiceFilter);
   const el = document.getElementById("short-log");
   if (!list.length) { el.innerHTML = `<p class="muted" style="font-size:13px">Sin registros con este filtro.</p>`; return; }
-  const rows = list.map(e => {
-    const note = e.note ? `<div class="short-log-note">${e.note}</div>` : "";
+  el.innerHTML = list.map(e => {
+    const nota = e.note ? ` · ${e.note}` : "";
+    let titulo, detalle, resultado;
     if (e.kind === "putt") {
       const pph = puttPerHole(e);
-      return `<tr>
-        <td>${e.date}</td>
-        <td class="club-cell">Putting green</td>
-        <td>${placeLabel(e.place)}${e.holes ? ` · ${e.holes} hoyos` : ""}${note}</td>
-        <td class="num"><span class="${e.score < 0 ? "pos" : e.score > 0 ? "neg" : ""}">${signedF(e.score, 0)}</span>${pph != null ? ` <span class="muted" style="font-size:11px">${fmt(pph, 2)}/hoyo</span>` : ""}</td>
-        <td><button class="btn-del" data-pr-del="${e.id}">×</button></td>
-      </tr>`;
+      titulo = "Putting green";
+      detalle = `${placeLabel(e.place)} · ${e.holes ? `${e.holes} hoyos` : `<span class="badge warn">faltan hoyos</span>`}${nota}`;
+      resultado = pph != null
+        ? `<b>${fmt(pph, 2)}</b><span class="pr-unit">/hoyo</span><div class="pr-sub">${signedF(e.score, 0)} vs par</div>`
+        : `–<div class="pr-sub">${signedF(e.score, 0)} vs par</div>`;
+    } else {
+      titulo = `Aprox. ${e.dist} pasos`;
+      detalle = `${clubLabel(e.club)}${nota}`;
+      resultado = `<b>${e.hits}/${e.total}</b><div class="pr-sub">${apprBadge(apprPct(e), "")}</div>`;
     }
-    return `<tr>
-      <td>${e.date}</td>
-      <td class="club-cell">Aprox. ${e.dist} pasos</td>
-      <td>${clubLabel(e.club)}${note}</td>
-      <td class="num">${e.hits}/${e.total} ${apprBadge(apprPct(e), "")}</td>
-      <td><button class="btn-del" data-pr-del="${e.id}">×</button></td>
-    </tr>`;
+    return `<div class="pr-row">
+      <div class="pr-main">
+        <div class="pr-title">${e.date} · <b>${titulo}</b></div>
+        <div class="pr-sub">${detalle}</div>
+      </div>
+      <div class="pr-res">${resultado}</div>
+      <button class="btn-edit" data-pr-edit="${e.id}" aria-label="Editar">✏️</button>
+      <button class="btn-del" data-pr-del="${e.id}" aria-label="Eliminar">×</button>
+    </div>`;
   }).join("");
-  el.innerHTML = `<table>
-    <thead><tr><th>Fecha</th><th>Ejercicio</th><th>Detalle</th><th class="num">Resultado</th><th></th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
 }
 
-/* ---------- Formulario ---------- */
+/* ---------- Formulario (alta y edición) ---------- */
+let editingId = null; // id del entrenamiento que se está editando, o null si es alta
+
 function syncPracticeForm() {
   document.querySelectorAll("[data-prkind]").forEach(b => b.classList.toggle("active", b.dataset.prkind === prKind));
   const isPutt = prKind === "putt";
   document.querySelectorAll(".pr-putt").forEach(e => e.style.display = isPutt ? "" : "none");
   document.querySelectorAll(".pr-appr").forEach(e => e.style.display = isPutt ? "none" : "");
   document.getElementById("pr-help").innerHTML = isPutt
-    ? "Recorre el putting green entero contando 2 putts por hoyo como par y anota el total sobre/bajo par (ej. −2 si terminaste dos golpes bajo). Los hoyos son opcionales: si los anotas, calculo además tus putts por hoyo y los comparo con los de tus rondas."
+    ? "Recorre el putting green entero contando 2 putts por hoyo como par y anota el total sobre/bajo par (ej. −2 si terminaste dos golpes bajo). Los <b>hoyos son obligatorios</b>: con ellos calculo tus putts por hoyo, que es lo que permite comparar una vuelta de 9 con una de 18."
     : `Anota cuántas de las bolas quedaron dentro del green desde ${prKind === "a10" ? "10" : "20"} pasos, usando el mismo palo en toda la tanda.`;
+
+  const editing = !!editingId;
+  const e = editing ? state.practice.find(x => x.id === editingId) : null;
+  document.getElementById("pr-form-title").innerHTML = e
+    ? `✏️ Editando entrenamiento del ${e.date}`
+    : "＋ Registrar entrenamiento";
+  document.getElementById("pr-add").textContent = editing ? "Guardar cambios" : "Guardar entrenamiento";
+  document.getElementById("pr-cancel").style.display = editing ? "" : "none";
+  document.getElementById("pr-form-card").classList.toggle("editing", editing);
 }
 
-function addPracticeEntry() {
+/* Carga un entrenamiento en el formulario para modificarlo */
+function startEditPractice(id) {
+  const e = state.practice.find(x => x.id === id);
+  if (!e) return;
+  editingId = id;
+  prKind = e.kind === "putt" ? "putt" : (e.dist === 20 ? "a20" : "a10");
+  document.getElementById("pr-date").value = e.date || todayStr();
+  document.getElementById("pr-note").value = e.note || "";
+  if (e.kind === "putt") {
+    document.getElementById("pr-place").value = e.place;
+    document.getElementById("pr-score").value = e.score;
+    document.getElementById("pr-holes").value = e.holes || "";
+  } else {
+    document.getElementById("pr-club").value = e.club;
+    document.getElementById("pr-hits").value = e.hits;
+    document.getElementById("pr-total").value = e.total;
+  }
+  syncPracticeForm();
+  document.getElementById("pr-form-card").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelEditPractice() {
+  editingId = null;
+  document.getElementById("pr-note").value = "";
+  syncPracticeForm();
+}
+
+/* Construye el entrenamiento desde el formulario; null si hay algo inválido */
+function practiceFromForm(id) {
   const date = document.getElementById("pr-date").value || todayStr();
   const note = document.getElementById("pr-note").value.trim();
-  const id = "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-  let entry;
   if (prKind === "putt") {
+    const holes = Math.round(+document.getElementById("pr-holes").value || 0);
+    if (!(holes >= 1 && holes <= 36)) {
+      alert("Anota cuántos hoyos tiene el recorrido del putting green (entre 1 y 36). Es lo que permite comparar vueltas de distinto largo.");
+      document.getElementById("pr-holes").focus();
+      return null;
+    }
     const score = Math.round(+document.getElementById("pr-score").value || 0);
-    const holesRaw = Math.round(+document.getElementById("pr-holes").value || 0);
-    const holes = holesRaw >= 1 && holesRaw <= 36 ? holesRaw : null;
-    if (holes && score < -2 * holes) { alert(`Con ${holes} hoyos el mejor score posible es ${-holes} (1 putt por hoyo). Revisa el número.`); return; }
-    entry = { id, kind: "putt", date, place: document.getElementById("pr-place").value, score, holes, note };
-  } else {
-    const total = Math.max(1, Math.min(50, Math.round(+document.getElementById("pr-total").value || 10)));
-    const hits = Math.max(0, Math.min(total, Math.round(+document.getElementById("pr-hits").value || 0)));
-    document.getElementById("pr-total").value = total;
-    document.getElementById("pr-hits").value = hits;
-    entry = { id, kind: "appr", date, dist: prKind === "a10" ? 10 : 20, club: document.getElementById("pr-club").value, hits, total, note };
+    if (score < -holes) { alert(`Con ${holes} hoyos el mejor score posible es ${-holes} (1 putt por hoyo). Revisa el número.`); return null; }
+    return { id, kind: "putt", date, place: document.getElementById("pr-place").value, score, holes, note };
   }
-  state.practice.push(entry);
+  const total = Math.max(1, Math.min(50, Math.round(+document.getElementById("pr-total").value || 10)));
+  const hits = Math.max(0, Math.min(total, Math.round(+document.getElementById("pr-hits").value || 0)));
+  document.getElementById("pr-total").value = total;
+  document.getElementById("pr-hits").value = hits;
+  return { id, kind: "appr", date, dist: prKind === "a10" ? 10 : 20, club: document.getElementById("pr-club").value, hits, total, note };
+}
+
+function savePracticeEntry() {
+  const id = editingId || ("p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6));
+  const entry = practiceFromForm(id);
+  if (!entry) return;
+  if (editingId) {
+    const i = state.practice.findIndex(x => x.id === editingId);
+    if (i >= 0) state.practice[i] = entry; else state.practice.push(entry);
+    editingId = null;
+  } else {
+    state.practice.push(entry);
+  }
   save();
   document.getElementById("pr-note").value = "";
   renderAll(); // por si era el primer dato guardado en la app
@@ -2148,14 +2223,20 @@ function init() {
   document.querySelectorAll("[data-prfilter]").forEach(b => b.addEventListener("click", () => {
     practiceFilter = b.dataset.prfilter; renderShortLog();
   }));
-  document.getElementById("pr-add").addEventListener("click", addPracticeEntry);
-  document.getElementById("short-log").addEventListener("click", e => {
+  document.getElementById("pr-add").addEventListener("click", savePracticeEntry);
+  document.getElementById("pr-cancel").addEventListener("click", cancelEditPractice);
+  const practiceRowClick = e => {
+    const edit = e.target.dataset.prEdit;
+    if (edit) { startEditPractice(edit); return; }
     const id = e.target.dataset.prDel;
     if (!id) return;
     if (!confirm("¿Eliminar este entrenamiento?")) return;
+    if (editingId === id) editingId = null; // no dejar el formulario editando algo borrado
     state.practice = state.practice.filter(x => x.id !== id);
     save(); renderAll();
-  });
+  };
+  document.getElementById("short-log").addEventListener("click", practiceRowClick);
+  document.getElementById("pr-legacy").addEventListener("click", practiceRowClick);
   syncPracticeForm();
 
   // Metas
