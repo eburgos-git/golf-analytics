@@ -314,6 +314,9 @@ function clubStats(shots, club) {
     ldAvg: mean(sh.map(s => s.ld)), ldStd: std(sh.map(s => s.ld)),
     apexAvg: mean(sh.map(s => s.apex)),
     sideAvg: mean(sh.map(s => s.side)), sideStd: std(sh.map(s => s.side)),
+    // Side carry medio absoluto: desvío medio desde la línea de objetivo (como el promedio de Rapsodo).
+    // Es lo comparable con la «dispersión lateral» de las referencias de cancha.
+    sideAbsAvg: mean(sh.map(s => s.side != null ? Math.abs(s.side) : null)),
     curveMed: median(curves), curves,
     wellCarry,
     shots: sh
@@ -552,10 +555,10 @@ function generateInsights(shots) {
         if (gap >= 8) out.strength.push({ club: lbl, title: `Superas al ${bl} — ${lbl}`, body: `Tu distancia total ${fmt(U.dist(st.totalAvg), 0)} ${U.distU()} supera la referencia (${benchRange(bench.totalRange, U.dist)} ${U.distU()}) por ${fmt(U.dist(gap), 0)} ${U.distU()}.` });
         else if (gap <= -15) out.improve.push({ club: lbl, title: `Por debajo de la referencia — ${lbl}`, body: `Tu distancia total ${fmt(U.dist(st.totalAvg), 0)} ${U.distU()} está ${fmt(U.dist(-gap), 0)} ${U.distU()} bajo el ${bl} (${benchRange(bench.totalRange, U.dist)} ${U.distU()}).` });
       }
-      if (st.sideStd != null && bench.side != null && st.n >= 5) {
-        const ratio = st.sideStd / bench.side;
-        if (ratio <= 1) out.strength.push({ club: lbl, title: `Dispersión de nivel ${bl} — ${lbl}`, body: `Tu dispersión lateral ±${fmt(U.dist(st.sideStd), 0)} ${U.distU()} está dentro de la referencia (±${fmt(U.dist(bench.side), 0)} ${U.distU()}).` });
-        else if (ratio >= 1.6) out.improve.push({ club: lbl, title: `Dispersión lateral sobre la referencia — ${lbl}`, body: `Tu dispersión lateral ±${fmt(U.dist(st.sideStd), 0)} ${U.distU()} es ${fmt(ratio, 1)}× la del ${bl} (±${fmt(U.dist(bench.side), 0)} ${U.distU()}). Ojo: la referencia es de cancha; en el rango la dispersión suele medirse algo distinta.` });
+      if (st.sideAbsAvg != null && bench.side != null && st.n >= 5) {
+        const ratio = st.sideAbsAvg / bench.side;
+        if (ratio <= 1) out.strength.push({ club: lbl, title: `Precisión lateral de nivel ${bl} — ${lbl}`, body: `Tu side carry medio ${fmt(U.dist(st.sideAbsAvg), 0)} ${U.distU()} desde el objetivo está dentro de la referencia (±${fmt(U.dist(bench.side), 0)} ${U.distU()}).` });
+        else if (ratio >= 1.6) out.improve.push({ club: lbl, title: `Side carry sobre la referencia — ${lbl}`, body: `Tu side carry medio ${fmt(U.dist(st.sideAbsAvg), 0)} ${U.distU()} desde el objetivo es ${fmt(ratio, 1)}× la referencia del ${bl} (±${fmt(U.dist(bench.side), 0)} ${U.distU()}). Si tu dispersión (±) es baja, el problema es un fallo sistemático hacia un lado, no falta de repetibilidad.` });
       }
     }
   });
@@ -853,7 +856,8 @@ function drawClubDetail(club) {
     metric("Apex", fmt(U.height(st.apexAvg), 0), U.heightU(), "") +
     metric("Salida media", `${st.ldAvg > 0 ? "+" : ""}${fmt(st.ldAvg, 1)}`, "°", `dirección inicial (+ der / − izq) · ±${fmt(st.ldStd, 1)}°`) +
     metric("Curva en vuelo", `${st.curveMed > 0 ? "+" : ""}${fmt(U.dist(st.curveMed), 0)}`, U.distU(), "mediana · + derecha / − izquierda") +
-    metric("Lateral medio", fmt(U.dist(st.sideAvg), 0), U.distU(), `±${fmt(U.dist(st.sideStd), 0)} dispersión`) +
+    metric("Lateral medio", fmt(U.dist(st.sideAvg), 0), U.distU(), `side carry medio ${fmt(U.dist(st.sideAbsAvg), 0)} ${U.distU()} desde el objetivo`) +
+    metric("Dispersión lateral", `±${fmt(U.dist(st.sideStd), 0)}`, U.distU(), "desv. estándar alrededor de tu lateral medio (repetibilidad)") +
     (() => { const fw = fairwayStats(st); return fw
       ? metric("En calle", `${fw.inPct}%`, "", `fuera: ${fw.left} izq · ${fw.right} der · calle ${fmt(U.dist(state.prefs.fairway), 0)} ${U.distU()}`)
       : metric("En calle", "–", "", ""); })() +
@@ -967,11 +971,11 @@ function drawClubDetail(club) {
     };
     cmp.innerHTML = `<h3>Comparación vs ${BENCHMARKS[state.prefs.benchmark].label}</h3>` +
       bar("Distancia total", U.dist(st.totalAvg), U.dist(bench.total), U.distU(), 0, benchRange(bench.totalRange, U.dist)) +
-      bar("Dispersión lateral (menos es mejor)", U.dist(st.sideStd), U.dist(bench.side), U.distU(), 0, `±${fmt(U.dist(bench.side), 0)}`, true) +
+      bar("Side carry medio (menos es mejor)", U.dist(st.sideAbsAvg), U.dist(bench.side), U.distU(), 0, `±${fmt(U.dist(bench.side), 0)}`, true) +
       bar("Club speed", U.speed(st.csAvg), U.speed(bench.club), U.speedU(), 0, benchRange(bench.clubRange, U.speed)) +
       bar("Smash factor", st.smashAvg, bench.smash, "", 2, benchRange(bench.smashRange, x => x, 2)) +
       bar("Ball speed (derivada)", U.speed(st.ballAvg), U.speed(bench.ball), U.speedU()) +
-      `<p class="help-note">La distancia y la dispersión de referencia son de cancha (Arccos / Shot Scope); club speed y smash de TrackMan / Arccos. Perfil: hombre de 50 años.</p>`;
+      `<p class="help-note">La distancia y la dispersión lateral de referencia son de cancha (Arccos / Shot Scope); club speed y smash de TrackMan / Arccos. Perfil: hombre de 50 años. El side carry medio es tu desvío medio desde la línea de objetivo (el promedio que muestra Rapsodo), comparable con la dispersión lateral de la referencia.</p>`;
   } else {
     cmp.innerHTML = `<p class="muted">No hay referencia disponible para este palo.</p>`;
   }
@@ -1151,7 +1155,7 @@ function renderBenchmark() {
     if (!b) return "";
     const pillD = (v) => v == null ? "–" : `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(U.dist(v), 0)}</span>`;
     const gt = (st.totalAvg != null && b.total != null) ? st.totalAvg - b.total : null;
-    const sideOk = (st.sideStd != null && b.side != null) ? st.sideStd <= b.side : null;
+    const sideOk = (st.sideAbsAvg != null && b.side != null) ? st.sideAbsAvg <= b.side : null;
     const csOk = (st.csAvg != null && b.club != null) ? st.csAvg >= b.club : null;
     const smOk = (st.smashAvg != null && b.smash != null) ? st.smashAvg >= b.smash : null;
     const cls = ok => ok == null ? "" : (ok ? "pos" : "neg");
@@ -1160,7 +1164,7 @@ function renderBenchmark() {
       <td class="num">${fmt(U.dist(st.totalAvg), 0)}</td>
       <td class="num muted">${benchRange(b.totalRange, U.dist)}</td>
       <td class="num">${pillD(gt)}</td>
-      <td class="num ${cls(sideOk)}">±${fmt(U.dist(st.sideStd), 0)}</td>
+      <td class="num ${cls(sideOk)}">${fmt(U.dist(st.sideAbsAvg), 0)}</td>
       <td class="num muted">±${fmt(U.dist(b.side), 0)}</td>
       <td class="num ${cls(csOk)}">${fmt(U.speed(st.csAvg), 0)}</td>
       <td class="num muted">${benchRange(b.clubRange, U.speed)}</td>
@@ -1171,7 +1175,7 @@ function renderBenchmark() {
   document.getElementById("bench-table-body").innerHTML = rows;
 
   // Radar: por palo o promedio de todos (% de tu métrica vs el benchmark)
-  // "side" se invierte (ref / tuyo): menos dispersión = más de 100%
+  // "side" = side carry medio absoluto; se invierte (ref / tuyo): menos desvío = más de 100%
   const metrics = ["total", "side", "club", "smash"];
   const mlabels = { total: "Distancia total", side: "Precisión lateral", club: "Club speed", smash: "Smash" };
 
@@ -1186,7 +1190,7 @@ function renderBenchmark() {
   const ratioFor = (m, c) => {
     const st = clubStats(shots, c); const b = bench[c];
     if (!b) return null;
-    const mine = { total: st.totalAvg, side: st.sideStd, club: st.csAvg, smash: st.smashAvg }[m];
+    const mine = { total: st.totalAvg, side: st.sideAbsAvg, club: st.csAvg, smash: st.smashAvg }[m];
     const ref = { total: b.total, side: b.side, club: b.club, smash: b.smash }[m];
     if (mine == null || !ref) return null;
     return m === "side" ? (mine ? (ref / mine) * 100 : null) : (mine / ref) * 100;

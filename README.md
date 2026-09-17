@@ -69,4 +69,4 @@ si no, se usa la fecha de carga y puedes editarla en **Datos**.
 > Los benchmarks son valores referenciales para un hombre de 50 años (hcp 9 y hcp 15).
 > Distancia total en campo y dispersión lateral provienen de Arccos / Shot Scope; club speed
 > y smash factor de TrackMan / Arccos. La app compara tu **distancia total** (no el carry)
-> y tu dispersión lateral (±) contra esas referencias. Sirven como guía de tendencia.
+> y tu side carry medio (desvío medio desde el objetivo) contra esas referencias. Sirven como guía de tendencia.
