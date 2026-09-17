@@ -15,7 +15,7 @@ instalar como app desde Safari).
 - **Cancha**: importa tus rondas reales desde Garmin Golf (script `tools/garmin_golf_export.py`): score vs par, putts, fairways y GIR por ronda, detalle hoyo a hoyo, evolución, y comparación cancha vs rango (¿fallas al mismo lado?).
 - **Corto (juego corto y putt)**: registro manual de tus tres ejercicios de la cancha de práctica — vuelta al putting green (fecha, green: Valle 1 / Valle 10 / Driving, **hoyos del recorrido** y score vs par contando 2 putts/hoyo) y tandas de aproximación desde 10 y 20 pasos (fecha, palo, bolas que quedan en green de N tiros). El putting se analiza en **putts por hoyo**, para que una vuelta de 9 y una de 18 sean comparables. Analiza progresión por green y por distancia, ranking de palos, regularidad entre tandas, tendencias por regresión y compara tus putts por hoyo del putting green con los de tus rondas reales. Cada registro se puede **editar** o eliminar desde el historial.
 - **Metas**: define metas por palo (ej. «3 Madera: 50% en calle en los últimos 30 días, solo tiros con carry > 140 yd» o «Hierro 7: 60% con lateral ≤ 15 yd») y sigue tu % de cumplimiento sesión a sesión desde el día en que definiste la meta, contra la línea objetivo.
-- **Benchmark**: comparación contra **Aficionado (hombre)** y **Profesional Senior**.
+- **Benchmark**: comparación contra el **hombre de 50 años** con **hándicap 9** o **hándicap 15**: distancia total en campo, dispersión lateral, club speed y smash factor por palo.
 - **Datos**: gestionar sesiones, fechas, unidades (yd/mph ↔ m/km·h), mano dominante, y respaldo (exportar/importar).
 
 Tus datos quedan **solo en tu dispositivo** (localStorage del navegador). Nada se sube a internet.
@@ -62,9 +62,11 @@ si no, se usa la fecha de carga y puedes editarla en **Datos**.
 - `index.html` — estructura y navegación
 - `styles.css` — estilos (mobile-first)
 - `app.js` — parseo CSV, estadística, gráficos, insights
-- `benchmarks.js` — datos de referencia (aficionado / pro senior)
+- `benchmarks.js` — datos de referencia (hombre 50 años, hcp 9 / hcp 15)
 - `demo.js` — datos de ejemplo
 - `manifest.webmanifest`, `icon.svg` — instalación como app
 
-> Los benchmarks son valores referenciales (promedios públicos tipo TrackMan/Rapsodo).
-> Sirven como guía de tendencia, no como medida exacta.
+> Los benchmarks son valores referenciales para un hombre de 50 años (hcp 9 y hcp 15).
+> Distancia total en campo y dispersión lateral provienen de Arccos / Shot Scope; club speed
+> y smash factor de TrackMan / Arccos. La app compara tu **distancia total** (no el carry)
+> y tu dispersión lateral (±) contra esas referencias. Sirven como guía de tendencia.

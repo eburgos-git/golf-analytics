@@ -87,12 +87,12 @@
             <th>Palo</th><th>N</th><th class="num">Carry</th><th class="num">±</th>
             <th class="num">P25–P75</th>
             <th class="num">Ball</th><th class="num">Smash</th><th class="num">Disp.</th>
-            <th>Calle</th><th>Consist.</th><th class="num">vs Ref</th>
+            <th>Calle</th><th>Consist.</th><th class="num">Total vs Ref</th>
           </tr></thead>
           <tbody id="bag-table-body"></tbody>
         </table>
       </div>
-      <p class="help-note">«Calle» = % de bolas que caen dentro del fairway apuntando al centro (ancho configurable en Datos → Ajustes).</p>
+      <p class="help-note">«Calle» = % de bolas que caen dentro del fairway apuntando al centro (ancho configurable en Datos → Ajustes). «Total vs Ref» = tu distancia total media menos la referencia de campo.</p>
     </div>
   </section>
 
@@ -325,8 +325,8 @@
     <h2 class="section">Benchmark</h2>
     <div class="card">
       <select id="benchmark-select" style="width:100%;margin-bottom:6px">
-        <option value="amateur">Aficionado (hombre)</option>
-        <option value="pro_senior">Profesional Senior</option>
+        <option value="hcp9">Hcp 9 · hombre 50 años</option>
+        <option value="hcp15">Hcp 15 · hombre 50 años</option>
       </select>
       <h3 id="bench-title" style="margin-top:10px"></h3>
       <p class="muted" id="bench-desc" style="font-size:13px;margin:0 0 12px"></p>
@@ -338,13 +338,15 @@
       <div class="table-scroll">
         <table>
           <thead><tr>
-            <th>Palo</th><th class="num">Tu carry</th><th class="num">Ref</th><th class="num">Δ</th>
-            <th class="num">Tu ball</th><th class="num">Ref</th><th class="num">Smash</th><th class="num">Δ</th>
+            <th>Palo</th><th class="num">Tu total</th><th class="num">Ref</th><th class="num">Δ</th>
+            <th class="num">Tu disp.</th><th class="num">Ref</th>
+            <th class="num">Tu club sp.</th><th class="num">Ref</th>
+            <th class="num">Tu smash</th><th class="num">Ref</th>
           </tr></thead>
           <tbody id="bench-table-body"></tbody>
         </table>
       </div>
-      <p class="help-note">Valores de referencia aproximados (TrackMan/Rapsodo públicos). Úsalos como guía de tendencia.</p>
+      <p class="help-note">Referencia para hombre de 50 años. Distancia total en campo y dispersión lateral: Arccos / Shot Scope. Club speed y smash factor: TrackMan / Arccos. Se compara con tu <b>distancia total</b> (no carry) y tu dispersión lateral (±). Úsalos como guía de tendencia.</p>
     </div>
   </section>
 

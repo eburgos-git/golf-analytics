@@ -18,7 +18,7 @@ let state = {
   prefs: {
     unit: "imperial",    // imperial (yd/mph) | metric (m/kmh)
     hand: "right",       // right | left
-    benchmark: "amateur",// amateur | pro_senior
+    benchmark: DEFAULT_BENCHMARK, // hcp9 | hcp15 (ver benchmarks.js)
     fairway: 36,         // ancho de fairway en YARDAS (para % en calle)
     outliers: true       // excluir tiros atípicos (tops/lecturas erróneas) de las estadísticas
   }
@@ -207,6 +207,8 @@ function load() {
     if (Array.isArray(s)) state.sessions = s;
     const p = JSON.parse(localStorage.getItem(PREF_KEY));
     if (p) state.prefs = { ...state.prefs, ...p };
+    // Migra referencias antiguas (amateur / pro_senior) al nuevo benchmark
+    if (!BENCHMARKS[state.prefs.benchmark]) state.prefs.benchmark = DEFAULT_BENCHMARK;
     const g = JSON.parse(localStorage.getItem(GOALS_KEY));
     if (Array.isArray(g)) state.goals = g;
     const r = JSON.parse(localStorage.getItem(ROUNDS_KEY));
@@ -542,11 +544,19 @@ function generateInsights(shots) {
       else if (st.laAvg > win[1]) out.improve.push({ club: lbl, title: `Lanzamiento muy alto — ${lbl}`, body: `Launch angle ${fmt(st.laAvg, 1)}° (ideal ${win[0]}-${win[1]}°). Bola que sube demasiado y se queda corta o sufre con viento.` });
     }
 
-    /* --- Comparación vs benchmark (carry) --- */
-    if (bench && st.carryAvg != null) {
-      const gap = st.carryAvg - bench.carry;
-      if (gap >= 8) out.strength.push({ club: lbl, title: `Superas al ${BENCHMARKS[state.prefs.benchmark].label} — ${lbl}`, body: `Tu carry ${fmt(U.dist(st.carryAvg), 0)} ${U.distU()} supera la referencia (${fmt(U.dist(bench.carry), 0)}) por ${fmt(U.dist(gap), 0)} ${U.distU()}.` });
-      else if (gap <= -15) out.improve.push({ club: lbl, title: `Por debajo de la referencia — ${lbl}`, body: `Tu carry ${fmt(U.dist(st.carryAvg), 0)} ${U.distU()} está ${fmt(U.dist(-gap), 0)} ${U.distU()} bajo el ${BENCHMARKS[state.prefs.benchmark].label} (${fmt(U.dist(bench.carry), 0)}).` });
+    /* --- Comparación vs benchmark (distancia total en campo y dispersión lateral) --- */
+    if (bench) {
+      const bl = BENCHMARKS[state.prefs.benchmark].label;
+      if (st.totalAvg != null && bench.total != null) {
+        const gap = st.totalAvg - bench.total;
+        if (gap >= 8) out.strength.push({ club: lbl, title: `Superas al ${bl} — ${lbl}`, body: `Tu distancia total ${fmt(U.dist(st.totalAvg), 0)} ${U.distU()} supera la referencia (${benchRange(bench.totalRange, U.dist)} ${U.distU()}) por ${fmt(U.dist(gap), 0)} ${U.distU()}.` });
+        else if (gap <= -15) out.improve.push({ club: lbl, title: `Por debajo de la referencia — ${lbl}`, body: `Tu distancia total ${fmt(U.dist(st.totalAvg), 0)} ${U.distU()} está ${fmt(U.dist(-gap), 0)} ${U.distU()} bajo el ${bl} (${benchRange(bench.totalRange, U.dist)} ${U.distU()}).` });
+      }
+      if (st.sideStd != null && bench.side != null && st.n >= 5) {
+        const ratio = st.sideStd / bench.side;
+        if (ratio <= 1) out.strength.push({ club: lbl, title: `Dispersión de nivel ${bl} — ${lbl}`, body: `Tu dispersión lateral ±${fmt(U.dist(st.sideStd), 0)} ${U.distU()} está dentro de la referencia (±${fmt(U.dist(bench.side), 0)} ${U.distU()}).` });
+        else if (ratio >= 1.6) out.improve.push({ club: lbl, title: `Dispersión lateral sobre la referencia — ${lbl}`, body: `Tu dispersión lateral ±${fmt(U.dist(st.sideStd), 0)} ${U.distU()} es ${fmt(ratio, 1)}× la del ${bl} (±${fmt(U.dist(bench.side), 0)} ${U.distU()}). Ojo: la referencia es de cancha; en el rango la dispersión suele medirse algo distinta.` });
+      }
     }
   });
 
@@ -705,7 +715,7 @@ function renderOverview() {
     const cs = consistencyScore(st);
     const cl = consistencyLabel(cs);
     const b = bench[c];
-    const gap = b ? st.carryAvg - b.carry : null;
+    const gap = (b && st.totalAvg != null) ? st.totalAvg - b.total : null;
     const gapTxt = gap == null ? "–" : `<span class="${gap >= 0 ? 'pos' : 'neg'}">${gap >= 0 ? '+' : ''}${fmt(U.dist(gap), 0)}</span>`;
     const fw = fairwayStats(st);
     const fwTxt = fw ? `<span class="badge ${fairwayLabel(fw.inPct)}">${fw.inPct}%</span>` : "–";
@@ -730,7 +740,8 @@ function renderOverview() {
   // Gráfico de carry por palo (gapping)
   const labels = clubs.map(clubLabel);
   const carryData = clubs.map(c => U.dist(clubStats(shots, c).carryAvg));
-  const benchData = clubs.map(c => bench[c] ? U.dist(bench[c].carry) : null);
+  const totalData = clubs.map(c => U.dist(clubStats(shots, c).totalAvg));
+  const benchData = clubs.map(c => bench[c] ? U.dist(bench[c].total) : null);
   renderGappingAnalysis(shots);
   renderRecords(shots);
 
@@ -740,13 +751,14 @@ function renderOverview() {
       labels,
       datasets: [
         { label: `Tu carry (${U.distU()})`, data: carryData, borderColor: COLORS.green, backgroundColor: "rgba(46,125,79,.18)", fill: true, tension: .3, pointRadius: 4, pointBackgroundColor: COLORS.green, borderWidth: 3 },
-        { label: BENCHMARKS[state.prefs.benchmark].label, data: benchData, borderColor: COLORS.gold, backgroundColor: COLORS.gold, tension: .3, pointRadius: 4, pointBackgroundColor: COLORS.gold, borderWidth: 3, borderDash: [6, 4], fill: false }
+        { label: `Tu total (${U.distU()})`, data: totalData, borderColor: COLORS.greenL, backgroundColor: COLORS.greenL, tension: .3, pointRadius: 3, pointBackgroundColor: COLORS.greenL, borderWidth: 2, fill: false },
+        { label: `${BENCHMARKS[state.prefs.benchmark].label} · total`, data: benchData, borderColor: COLORS.gold, backgroundColor: COLORS.gold, tension: .3, pointRadius: 4, pointBackgroundColor: COLORS.gold, borderWidth: 3, borderDash: [6, 4], fill: false }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { position: "top" }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y, 0)} ${U.distU()}` } } },
-      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: `Carry (${U.distU()})` }, beginAtZero: true }) }
+      scales: { x: gridOpts(), y: gridOpts({ title: { display: true, text: `Distancia (${U.distU()})` }, beginAtZero: true }) }
     }
   });
 }
@@ -940,23 +952,26 @@ function drawClubDetail(club) {
   // Comparación vs benchmark
   const cmp = document.getElementById("club-bench");
   if (bench) {
-    const bar = (label, val, ref, unit, dec = 0) => {
-      const pct = ref ? Math.min(140, (val / ref) * 100) : 0;
-      const refPct = ref ? Math.min(140, 100) : 0;
-      const good = val >= ref;
+    // lowerBetter: para dispersión lateral, menos es mejor
+    const bar = (label, val, ref, unit, dec = 0, refTxt = null, lowerBetter = false) => {
+      if (val == null || ref == null || isNaN(val)) return "";
+      const pct = Math.min(140, (val / ref) * 100);
+      const good = lowerBetter ? val <= ref : val >= ref;
       return `<div class="benchbar">
-        <div class="benchbar-top"><span>${label}</span><span>${fmt(val, dec)} ${unit} <span class="muted">/ ${fmt(ref, dec)}</span></span></div>
+        <div class="benchbar-top"><span>${label}</span><span>${fmt(val, dec)} ${unit} <span class="muted">/ ${refTxt ?? fmt(ref, dec)}</span></span></div>
         <div class="benchbar-track">
           <div class="benchbar-fill ${good ? 'good' : 'under'}" style="width:${Math.min(100, pct / 1.4)}%"></div>
-          <div class="benchbar-ref" style="left:${refPct / 1.4}%"></div>
+          <div class="benchbar-ref" style="left:${100 / 1.4}%"></div>
         </div>
       </div>`;
     };
     cmp.innerHTML = `<h3>Comparación vs ${BENCHMARKS[state.prefs.benchmark].label}</h3>` +
-      bar("Carry", U.dist(st.carryAvg), U.dist(bench.carry), U.distU()) +
-      bar("Ball speed", U.speed(st.ballAvg), U.speed(bench.ball), U.speedU()) +
-      bar("Club speed", U.speed(st.csAvg), U.speed(bench.club), U.speedU()) +
-      bar("Smash factor", st.smashAvg, bench.smash, "", 2);
+      bar("Distancia total", U.dist(st.totalAvg), U.dist(bench.total), U.distU(), 0, benchRange(bench.totalRange, U.dist)) +
+      bar("Dispersión lateral (menos es mejor)", U.dist(st.sideStd), U.dist(bench.side), U.distU(), 0, `±${fmt(U.dist(bench.side), 0)}`, true) +
+      bar("Club speed", U.speed(st.csAvg), U.speed(bench.club), U.speedU(), 0, benchRange(bench.clubRange, U.speed)) +
+      bar("Smash factor", st.smashAvg, bench.smash, "", 2, benchRange(bench.smashRange, x => x, 2)) +
+      bar("Ball speed (derivada)", U.speed(st.ballAvg), U.speed(bench.ball), U.speedU()) +
+      `<p class="help-note">La distancia y la dispersión de referencia son de cancha (Arccos / Shot Scope); club speed y smash de TrackMan / Arccos. Perfil: hombre de 50 años.</p>`;
   } else {
     cmp.innerHTML = `<p class="muted">No hay referencia disponible para este palo.</p>`;
   }
@@ -1134,27 +1149,31 @@ function renderBenchmark() {
     const st = clubStats(shots, c);
     const b = bench[c];
     if (!b) return "";
-    const gc = st.carryAvg - b.carry;
-    const gb = st.ballAvg - b.ball;
-    const gs = st.smashAvg - b.smash;
-    const pill = (v, dec = 0) => `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(dec === 2 ? v : U.dist(v), dec)}</span>`;
-    const pillS = (v) => `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(v, 2)}</span>`;
+    const pillD = (v) => v == null ? "–" : `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(U.dist(v), 0)}</span>`;
+    const gt = (st.totalAvg != null && b.total != null) ? st.totalAvg - b.total : null;
+    const sideOk = (st.sideStd != null && b.side != null) ? st.sideStd <= b.side : null;
+    const csOk = (st.csAvg != null && b.club != null) ? st.csAvg >= b.club : null;
+    const smOk = (st.smashAvg != null && b.smash != null) ? st.smashAvg >= b.smash : null;
+    const cls = ok => ok == null ? "" : (ok ? "pos" : "neg");
     return `<tr>
       <td class="club-cell">${clubLabel(c)}</td>
-      <td class="num">${fmt(U.dist(st.carryAvg), 0)}</td>
-      <td class="num muted">${fmt(U.dist(b.carry), 0)}</td>
-      <td class="num">${pill(gc, 0)}</td>
-      <td class="num">${fmt(U.speed(st.ballAvg), 0)}</td>
-      <td class="num muted">${fmt(U.speed(b.ball), 0)}</td>
-      <td class="num">${fmt(st.smashAvg, 2)}</td>
-      <td class="num">${pillS(gs)}</td>
+      <td class="num">${fmt(U.dist(st.totalAvg), 0)}</td>
+      <td class="num muted">${benchRange(b.totalRange, U.dist)}</td>
+      <td class="num">${pillD(gt)}</td>
+      <td class="num ${cls(sideOk)}">±${fmt(U.dist(st.sideStd), 0)}</td>
+      <td class="num muted">±${fmt(U.dist(b.side), 0)}</td>
+      <td class="num ${cls(csOk)}">${fmt(U.speed(st.csAvg), 0)}</td>
+      <td class="num muted">${benchRange(b.clubRange, U.speed)}</td>
+      <td class="num ${cls(smOk)}">${fmt(st.smashAvg, 2)}</td>
+      <td class="num muted">${benchRange(b.smashRange, x => x, 2)}</td>
     </tr>`;
   }).join("");
   document.getElementById("bench-table-body").innerHTML = rows;
 
   // Radar: por palo o promedio de todos (% de tu métrica vs el benchmark)
-  const metrics = ["carry", "ball", "club", "smash"];
-  const mlabels = { carry: "Carry", ball: "Ball speed", club: "Club speed", smash: "Smash" };
+  // "side" se invierte (ref / tuyo): menos dispersión = más de 100%
+  const metrics = ["total", "side", "club", "smash"];
+  const mlabels = { total: "Distancia total", side: "Precisión lateral", club: "Club speed", smash: "Smash" };
 
   // Selector de palo del radar
   const rsel = document.getElementById("bench-radar-club");
@@ -1167,9 +1186,10 @@ function renderBenchmark() {
   const ratioFor = (m, c) => {
     const st = clubStats(shots, c); const b = bench[c];
     if (!b) return null;
-    const mine = { carry: st.carryAvg, ball: st.ballAvg, club: st.csAvg, smash: st.smashAvg }[m];
-    const ref = { carry: b.carry, ball: b.ball, club: b.club, smash: b.smash }[m];
-    return (mine != null && ref) ? (mine / ref) * 100 : null;
+    const mine = { total: st.totalAvg, side: st.sideStd, club: st.csAvg, smash: st.smashAvg }[m];
+    const ref = { total: b.total, side: b.side, club: b.club, smash: b.smash }[m];
+    if (mine == null || !ref) return null;
+    return m === "side" ? (mine ? (ref / mine) * 100 : null) : (mine / ref) * 100;
   };
   const vals = metrics.map(m => {
     if (radarClub === "__all") {
